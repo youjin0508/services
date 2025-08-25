@@ -407,9 +407,7 @@ if (!empty($scholarship['documents_required'])) {
                     </div>
                     <p class="mb-2">Click to upload or drag and drop</p>
                     <p class="text-muted small">PDF, JPG, PNG up to 5MB</p>
-                    <input type="file" class="d-none" accept=".pdf,.jpg,.jpeg,.png" 
-                    <input type="file" accept=".pdf,.jpg,.jpeg,.png" 
-                           data-document="<?= htmlspecialchars($document) ?>" data-index="<?= $index ?>">
+                    <input type="file" accept=".pdf,.jpg,.jpeg,.png" data-document="<?= htmlspecialchars($document) ?>" data-index="<?= $index ?>">
                 </div>
                 <div class="file-preview d-none" id="preview-<?= $index ?>">
                     <div class="file-info">
@@ -783,7 +781,7 @@ function submitApplication() {
     
     // Submit application
     $.ajax({
-        url: 'submit_enhanced_application.php',
+        url: 'apply_scholarship.php',
         type: 'POST',
         data: formData,
         processData: false,

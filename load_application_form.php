@@ -419,6 +419,7 @@ if (!empty($scholarship['documents_required'])) {
                             <i class="fas fa-times"></i>
                         </button>
                     </div>
+                    <div class="mt-2" id="fileView-<?= $index ?>"></div>
                 </div>
             </div>
             <?php endforeach; ?>
@@ -591,6 +592,17 @@ function showFilePreview(index, fileName, fileSize) {
     const preview = $(`#preview-${index}`);
     $(`#fileName-${index}`).text(fileName);
     $(`#fileSize-${index}`).text(formatFileSize(fileSize));
+    const file = uploadedFiles[index]?.file;
+    const viewContainer = $(`#fileView-${index}`);
+    viewContainer.empty();
+    if (file) {
+        const url = URL.createObjectURL(file);
+        if (file.type === 'application/pdf') {
+            viewContainer.append(`<embed src="${url}" type="application/pdf" width="100%" height="300px" />`);
+        } else if (file.type === 'image/jpeg' || file.type === 'image/jpg' || file.type === 'image/png') {
+            viewContainer.append(`<img src="${url}" alt="preview" style="max-width:100%; max-height:300px; border:1px solid #e9ecef; border-radius:8px;" />`);
+        }
+    }
     preview.removeClass('d-none');
 }
 function removeFile(index) {
@@ -709,9 +721,21 @@ function prepareReviewData() {
     let documentsHtml = '';
     Object.keys(uploadedFiles).forEach(index => {
         const file = uploadedFiles[index];
-        documentsHtml += `<div class="mb-2">
-            <i class="fas fa-file-alt text-primary"></i> 
-            <strong>${file.documentType}:</strong> ${file.name}
+        const isImage = file.type === 'image/jpeg' || file.type === 'image/jpg' || file.type === 'image/png';
+        const isPdf = file.type === 'application/pdf';
+        const url = URL.createObjectURL(file.file);
+        let previewSnippet = '';
+        if (isImage) {
+            previewSnippet = `<img src="${url}" alt="preview" style="max-width:120px; max-height:120px; border:1px solid #e9ecef; border-radius:6px; margin-left:8px;" />`;
+        } else if (isPdf) {
+            previewSnippet = `<a href="${url}" target="_blank" class="btn btn-sm btn-outline-primary ms-2"><i class="fas fa-eye"></i> Preview</a>`;
+        }
+        documentsHtml += `<div class="mb-2 d-flex align-items-center">
+            <span>
+                <i class="fas fa-file-alt text-primary"></i> 
+                <strong>${file.documentType}:</strong> ${file.name}
+            </span>
+            <span class="ms-2">${previewSnippet}</span>
         </div>`;
     });
     $('#reviewDocuments').html(documentsHtml);
@@ -786,20 +810,24 @@ function submitApplication() {
         data: formData,
         processData: false,
         contentType: false,
-        success: function(response) {
-            try {
-                const result = JSON.parse(response);
-                if (result.status === 'success') {
-                    showSuccessMessage(result.message);
-                } else {
-                    showErrorMessage(result.message);
-                }
-            } catch (e) {
-                showErrorMessage('An unexpected error occurred. Please try again.');
+        dataType: 'json',
+        success: function(result) {
+            if (result && result.status === 'success') {
+                showSuccessMessage(result.message);
+            } else {
+                const msg = (result && result.message) ? result.message : 'Submission failed. Please try again.';
+                showErrorMessage(msg);
             }
         },
-        error: function() {
-            showErrorMessage('Network error. Please check your connection and try again.');
+        error: function(xhr) {
+            let msg = 'Network or server error. Please try again.';
+            if (xhr && xhr.responseText) {
+                try {
+                    const parsed = JSON.parse(xhr.responseText);
+                    if (parsed && parsed.message) msg = parsed.message;
+                } catch(_) {}
+            }
+            showErrorMessage(msg);
         },
         complete: function() {
             submitBtn.html(originalText);

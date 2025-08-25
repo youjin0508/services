@@ -1,7 +1,8 @@
 <?php
 session_start();
 require_once 'config.php';
-if (!isset($_SESSION['user_id'])) { header('Content-Type: application/json'); echo json_encode(['status'=>'error','message'=>'User not authenticated']); exit(); }
+header('Content-Type: application/json');
+if (!isset($_SESSION['user_id'])) { echo json_encode(['status'=>'error','message'=>'User not authenticated']); exit(); }
 
 try {
     if (!isset($_POST['scholarship_id'], $_POST['gpa'], $_POST['family_income'])) throw new Exception('Missing required application information.');
@@ -99,10 +100,9 @@ try {
     $al->execute(); $al->close();
 
     $conn->commit();
-    header('Content-Type: application/json');
     echo json_encode(['status'=>'success','message'=>'Your scholarship application has been submitted successfully! Application ID: '.$application_id,'application_id'=>$application_id,'documents_uploaded'=>count($uploaded_documents)]);
 } catch (Exception $e) {
     if ($conn->errno) $conn->rollback();
-    header('Content-Type: application/json');
+    http_response_code(400);
     echo json_encode(['status'=>'error','message'=>$e->getMessage()]);
 }

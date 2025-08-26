@@ -5,10 +5,7 @@ require_once 'csrf.php';
 if (!isset($_SESSION['user_id'])) { echo "Error: User not logged in."; exit(); }
 $user_id = $_SESSION['user_id'];
 
-$sql = "SELECT sa.id, s.name, sa.application_date, sa.status, sa.approval_date
-        FROM scholarship_applications sa
-        JOIN scholarships s ON sa.scholarship_id=s.id
-        WHERE sa.user_id=? ORDER BY sa.application_date DESC";
+$sql = "SELECT sa.id, s.name, sa.application_date, sa.status, sa.approval_date FROM scholarship_applications sa JOIN scholarships s ON s.id=sa.scholarship_id WHERE sa.user_id=? ORDER BY sa.application_date DESC";
 $st = $conn->prepare($sql);
 $st->bind_param("s", $user_id);
 $st->execute();

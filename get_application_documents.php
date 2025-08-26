@@ -11,13 +11,38 @@ $stmt->execute();
 $res = $stmt->get_result();
 if (!$res->num_rows) { echo '<div class="alert alert-info">No documents uploaded.</div>'; exit(); }
 
-echo '<div class="list-group">';
+echo '<div class="row g-3">';
 while ($row = $res->fetch_assoc()) {
-  $viewUrl = 'view_scholarship_document.php?id='.(int)$row['id'];
+  $docId = (int)$row['id'];
+  $viewUrl = 'view_scholarship_document.php?id='.$docId;
   $sizeKb = round(((int)$row['file_size']) / 1024, 2);
-  echo '<a href="'.htmlspecialchars($viewUrl).'" target="_blank" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">'
-     . '<div><strong>'.htmlspecialchars($row['document_type']?:'Document').'</strong><br><small class="text-muted">'
-     . htmlspecialchars($row['file_name']).' • '.date("M j, Y g:i A", strtotime($row['uploaded_at'])).'</small></div>'
-     . '<span class="badge bg-primary rounded-pill">'.$sizeKb.' KB</span></a>';
+  $mime = strtolower($row['mime_type'] ?? '');
+  $isImage = str_starts_with($mime, 'image/');
+  $isPdf = $mime === 'application/pdf';
+
+  echo '<div class="col-md-6">';
+  echo '<div class="card shadow-sm">';
+  echo '<div class="card-body">';
+  echo '<div class="d-flex justify-content-between align-items-start">';
+  echo '<div><strong>'.htmlspecialchars($row['document_type']?:'Document').'</strong><br>';
+  echo '<small class="text-muted">'.htmlspecialchars($row['file_name']).' • '.date("M j, Y g:i A", strtotime($row['uploaded_at'])).' • '.$sizeKb.' KB</small></div>';
+  echo '<div class="btn-group">';
+  echo '<a href="'.htmlspecialchars($viewUrl).'" target="_blank" class="btn btn-sm btn-outline-primary"><i class="fas fa-eye"></i> View</a>';
+  echo '<button class="btn btn-sm btn-outline-danger ms-1 delete-document" data-document-id="'.$docId.'"><i class="fas fa-trash"></i></button>';
+  echo '</div></div>';
+
+  echo '<div class="mt-3">';
+  if ($isImage) {
+    echo '<img src="'.htmlspecialchars($viewUrl).'" alt="preview" style="max-width:100%; max-height:280px; border:1px solid #e9ecef; border-radius:8px;" />';
+  } elseif ($isPdf) {
+    echo '<embed src="'.htmlspecialchars($viewUrl).'" type="application/pdf" width="100%" height="300px" />';
+  } else {
+    echo '<div class="alert alert-secondary py-2 mb-0"><i class="fas fa-file"></i> Preview not available. Use View to open.</div>';
+  }
+  echo '</div>';
+
+  echo '</div></div></div>';
 }
+
 echo '</div>';
+?>

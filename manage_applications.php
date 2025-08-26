@@ -286,6 +286,26 @@ body { background: var(--gray); }
      .fail(() => $('#documentsModalBody').html('<div class="alert alert-danger">Error loading documents.</div>'));
   });
 
+  // Handle document delete inside modal
+  $(document).on('click', '.delete-document', function(){
+    if (!confirm('Delete this document?')) return;
+    const docId = $(this).data('document-id');
+    const appId = $('.view-documents[data-bs-target="#viewDocumentsModal"]').data('application-id') || $('#rejectApplicationId').val();
+    $.post('delete_application_document.php', { document_id: docId })
+      .done(resp => {
+        if (resp && resp.status === 'success') {
+          // Reload the documents list
+          $('#documentsModalBody').html('Loading...');
+          $.get('get_application_documents.php', { application_id: appId })
+            .done(html => $('#documentsModalBody').html(html))
+            .fail(() => $('#documentsModalBody').html('<div class="alert alert-danger">Error loading documents.</div>'));
+        } else {
+          alert((resp && resp.message) || 'Delete failed.');
+        }
+      })
+      .fail(() => alert('Delete request failed.'));
+  });
+
   function postAction(action, id, extraData) {
     const btn = $('[data-id="'+id+'"].do-'+action.replace('_','-') );
     const original = btn.html();

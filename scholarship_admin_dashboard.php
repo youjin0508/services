@@ -51,8 +51,8 @@ body[data-theme="dark"] {
 	--accent-2: #ffd54f;
 }
 body { background: var(--bg); color: var(--text); }
-.main-content { margin-left: 260px; padding: 24px; }
-@media (max-width: 991.98px){ .main-content{ margin-left:0; } }
+.main-content { margin-left: 0; padding: 24px; }
+@media (min-width: 992px){ .sidebar + .main-content{ margin-left:260px; } }
 .header { background: linear-gradient(90deg,#00509E,#002855); color:#fff; padding:20px; border-radius:14px; margin-bottom:20px; box-shadow:0 8px 24px rgba(0,0,0,.25); }
 .kpi-card { background: var(--card); border:1px solid var(--border); border-radius:14px; padding:18px; height:100%; backdrop-filter: blur(8px); }
 .kpi-value { font-size: 2rem; font-weight: 800; color:var(--text); }

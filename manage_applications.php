@@ -119,7 +119,6 @@ if ($r=$conn->query("SELECT COUNT(*) c FROM scholarship_applications WHERE statu
 if ($r=$conn->query("SELECT COUNT(*) c FROM scholarship_applications WHERE status='rejected'")) $totals['rejected']=(int)$r->fetch_assoc()['c'];
 
 // Filters
-echo ""; // placeholder
 $scholarshipsList = [];
 $qq = $conn->query("SELECT id, name FROM scholarships ORDER BY name ASC");
 while ($rr = $qq->fetch_assoc()) $scholarshipsList[] = $rr;
@@ -250,11 +249,7 @@ body { background: var(--gray); }
         $fullName = trim(($row['first_name'] ?? '').' '.(($row['middle_name'] ?? '') ? $row['middle_name'].' ' : '').($row['last_name'] ?? ''));
         $status = strtolower($row['status'] ?? 'pending');
       ?>
-      <div class="card card-app application-item"
-           data-name="<?= strtolower(htmlspecialchars($fullName.' '.$row['scholarship_name'])) ?>"
-           data-status="<?= htmlspecialchars($status) ?>"
-           data-scholarship-id="<?= (int)$row['scholarship_id'] ?>"
-           data-applied="<?= date('Y-m-d', strtotime($row['application_date'])) ?>">
+      <div class="card card-app application-item" data-name="<?= strtolower(htmlspecialchars($fullName.' '.$row['scholarship_name'])) ?>" data-status="<?= htmlspecialchars($status) ?>" data-scholarship-id="<?= (int)$row['scholarship_id'] ?>" data-applied="<?= date('Y-m-d', strtotime($row['application_date'])) ?>">
         <div class="card-header">
           <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
             <div class="form-check">

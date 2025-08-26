@@ -132,6 +132,16 @@ if (!empty($_GET['from'])) { $from = $conn->real_escape_string($_GET['from']); $
 if (!empty($_GET['to'])) { $to = $conn->real_escape_string($_GET['to']); $where[] = "DATE(sa.application_date) <= '".$to."'"; }
 $whereSql = $where ? ('WHERE '.implode(' AND ',$where)) : '';
 
+// Pagination
+$perPage = 12;
+$page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
+$offset = ($page - 1) * $perPage;
+
+// Total count for pagination
+$countSql = "SELECT COUNT(*) c FROM scholarship_applications sa JOIN scholarships s ON sa.scholarship_id=s.id JOIN users u ON sa.user_id=u.user_id $whereSql";
+$totalCount = 0; if ($rc = $conn->query($countSql)) { $totalCount = (int)($rc->fetch_assoc()['c'] ?? 0); }
+$totalPages = (int)ceil($totalCount / $perPage);
+
 $sql = "SELECT 
           sa.id, sa.scholarship_id, sa.user_id, sa.application_date, sa.status, sa.approval_date,
           s.name AS scholarship_name, s.type AS scholarship_type, s.amount AS scholarship_amount,
@@ -140,7 +150,8 @@ $sql = "SELECT
         JOIN scholarships s ON sa.scholarship_id = s.id
         JOIN users u ON sa.user_id = u.user_id
         $whereSql
-        ORDER BY sa.application_date DESC";
+        ORDER BY sa.application_date DESC
+        LIMIT $perPage OFFSET $offset";
 $result = $conn->query($sql);
 ?>
 <!DOCTYPE html>
@@ -187,6 +198,7 @@ body { background: var(--gray); }
         <a href="scholarship_admin_dashboard.php" class="btn btn-sm btn-light">Dashboard</a>
         <a href="admin_manage_scholarships.php" class="btn btn-sm btn-light">Scholarships</a>
         <a href="approved_scholars.php" class="btn btn-sm btn-light">Approved Scholars</a>
+        <a href="export_applications_csv.php?<?= htmlspecialchars(http_build_query($_GET)) ?>" class="btn btn-sm btn-outline-primary"><i class="fa fa-file-csv"></i> Export CSV</a>
       </div>
     </div>
 
@@ -285,6 +297,9 @@ body { background: var(--gray); }
               <button class="btn btn-info btn-sm view-documents" data-application-id="<?= (int)$row['id'] ?>" data-bs-toggle="modal" data-bs-target="#viewDocumentsModal">
                 <i class="fa fa-file-alt"></i> View Documents
               </button>
+              <button class="btn btn-secondary btn-sm review-app" data-application-id="<?= (int)$row['id'] ?>" data-bs-toggle="modal" data-bs-target="#reviewModal">
+                <i class="fa fa-clipboard-check"></i> Review
+              </button>
               <a class="btn btn-secondary btn-sm" href="download_application_documents_zip.php?application_id=<?= (int)$row['id'] ?>" target="_blank">
                 <i class="fa fa-download"></i> Download ZIP
               </a>
@@ -304,6 +319,21 @@ body { background: var(--gray); }
         <div class="text-center text-muted py-5"><i class="fa fa-file-alt fa-2x mb-2"></i><div>No applications found.</div></div>
       <?php endif; ?>
     </div>
+
+    <?php if ($totalPages > 1): $qs = $_GET; ?>
+    <nav class="mt-3">
+      <ul class="pagination">
+        <?php $qs['page'] = max(1, $page-1); ?>
+        <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>"><a class="page-link" href="?<?= htmlspecialchars(http_build_query($qs)) ?>">Previous</a></li>
+        <?php for ($p=1; $p <= $totalPages; $p++): $qs['page']=$p; ?>
+          <li class="page-item <?= $p===$page ? 'active' : '' ?>"><a class="page-link" href="?<?= htmlspecialchars(http_build_query($qs)) ?>"><?= $p ?></a></li>
+        <?php endfor; ?>
+        <?php $qs['page'] = min($totalPages, $page+1); ?>
+        <li class="page-item <?= $page >= $totalPages ? 'disabled' : '' ?>"><a class="page-link" href="?<?= htmlspecialchars(http_build_query($qs)) ?>">Next</a></li>
+      </ul>
+    </nav>
+    <?php endif; ?>
+
   </div>
 </div>
 
@@ -318,6 +348,28 @@ body { background: var(--gray); }
   </div></div>
 </div>
 
+<!-- Review Workspace Modal -->
+<div class="modal fade" id="reviewModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl"><div class="modal-content">
+    <div class="modal-header">
+      <h5 class="modal-title"><i class="fa fa-clipboard-check me-2"></i> Review Application</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    </div>
+    <div class="modal-body" id="reviewModalBody">Loading...</div>
+  </div></div>
+</div>
+
+<!-- Lightbox Modal -->
+<div class="modal fade" id="docLightboxModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-fullscreen"><div class="modal-content bg-dark">
+    <div class="modal-header border-0">
+      <button type="button" class="btn btn-light ms-auto" data-bs-dismiss="modal">Close</button>
+    </div>
+    <div class="modal-body p-0 d-flex justify-content-center align-items-center" id="lightboxBody">
+    </div>
+  </div></div>
+</div>
+
 <!-- Reject Reason Modal -->
 <div class="modal fade" id="rejectReasonModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog"><div class="modal-content">
@@ -327,8 +379,17 @@ body { background: var(--gray); }
     </div>
     <div class="modal-body">
       <input type="hidden" id="rejectApplicationId" value="">
+      <div class="mb-2">
+        <label class="form-label">Templates</label>
+        <select id="rejectTemplate" class="form-select">
+          <option value="">Select a template...</option>
+          <option value="Incomplete requirements">Incomplete requirements</option>
+          <option value="Eligibility criteria not met">Eligibility criteria not met</option>
+          <option value="Documents not clear or illegible">Documents not clear or illegible</option>
+        </select>
+      </div>
       <div class="mb-3">
-        <label class="form-label">Please provide a reason</label>
+        <label class="form-label">Reason</label>
         <textarea id="rejectReasonText" class="form-control" rows="3" placeholder="Enter reason..." required></textarea>
       </div>
     </div>
@@ -347,8 +408,17 @@ body { background: var(--gray); }
       <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
     </div>
     <div class="modal-body">
+      <div class="mb-2">
+        <label class="form-label">Templates</label>
+        <select id="bulkRejectTemplate" class="form-select">
+          <option value="">Select a template...</option>
+          <option value="Incomplete requirements">Incomplete requirements</option>
+          <option value="Eligibility criteria not met">Eligibility criteria not met</option>
+          <option value="Documents not clear or illegible">Documents not clear or illegible</option>
+        </select>
+      </div>
       <div class="mb-3">
-        <label class="form-label">Please provide a reason for all selected applications</label>
+        <label class="form-label">Reason</label>
         <textarea id="bulkRejectReasonText" class="form-control" rows="3" placeholder="Enter reason..." required></textarea>
       </div>
     </div>
@@ -425,6 +495,38 @@ body { background: var(--gray); }
         }
       })
       .fail(() => alert('Delete request failed.'));
+  });
+
+  // Review workspace loader
+  $(document).on('click', '.review-app', function(){
+    const id = $(this).data('application-id');
+    $('#reviewModalBody').html('Loading...');
+    $.get('get_application_review.php', { application_id: id })
+      .done(html => $('#reviewModalBody').html(html))
+      .fail(() => $('#reviewModalBody').html('<div class="alert alert-danger">Error loading review workspace.</div>'));
+  });
+
+  // Lightbox for docs
+  $(document).on('click', '.doc-thumb', function(){
+    const src = $(this).data('view-src');
+    const el = `<img src="${src}" style="max-width:100%; max-height:100%;" />`;
+    $('#lightboxBody').html(el);
+    new bootstrap.Modal(document.getElementById('docLightboxModal')).show();
+  });
+  $(document).on('click', '.open-lightbox', function(){
+    const src = $(this).data('view-src');
+    const type = $(this).data('type') || 'pdf';
+    const el = type === 'pdf' ? `<embed src="${src}" type="application/pdf" width="100%" height="100%" />` : `<img src="${src}" style="max-width:100%; max-height:100%;" />`;
+    $('#lightboxBody').html(el);
+    new bootstrap.Modal(document.getElementById('docLightboxModal')).show();
+  });
+
+  // Reject templates
+  $('#rejectTemplate').on('change', function(){
+    const t = $(this).val(); if (t) $('#rejectReasonText').val(t);
+  });
+  $('#bulkRejectTemplate').on('change', function(){
+    const t = $(this).val(); if (t) $('#bulkRejectReasonText').val(t);
   });
 
   function postAction(action, id, extraData) {

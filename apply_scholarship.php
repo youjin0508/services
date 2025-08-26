@@ -41,9 +41,9 @@ try {
 
     $ins = $conn->prepare("INSERT INTO scholarship_applications (scholarship_id, user_id, application_date, status, gpa, course, year_level, documents_submitted, created_at, updated_at) VALUES (?, ?, NOW(), 'pending', ?, ?, ?, ?, NOW(), NOW())");
     $course = $user['course'] ?? '';
-    $year_level_value = isset($user['year']) ? (string)$user['year'] : '';
+    $year_level_value = isset($user['year']) && is_numeric($user['year']) ? (int)$user['year'] : null;
     $empty_docs_json = '[]';
-    $ins->bind_param("isdsss", $scholarship_id, $user_id, $gpa, $course, $year_level_value, $empty_docs_json);
+    $ins->bind_param("isdsis", $scholarship_id, $user_id, $gpa, $course, $year_level_value, $empty_docs_json);
     if (!$ins->execute()) throw new Exception('Failed to create application.');
     $application_id = $conn->insert_id;
     $ins->close();

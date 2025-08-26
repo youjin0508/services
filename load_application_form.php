@@ -332,7 +332,7 @@ if (!empty($scholarship['documents_required'])) {
             <div class="col-md-6">
                 <div class="mb-3">
                     <label class="form-label">Year Level</label>
-                    <input type="text" class="form-control" value="<?= htmlspecialchars($user['year_level'] ?? 'Not specified') ?>" readonly>
+                    <input type="text" class="form-control" value="<?= htmlspecialchars($user['year'] ?? 'Not specified') ?>" readonly>
                 </div>
             </div>
         </div>
@@ -713,7 +713,7 @@ function prepareReviewData() {
     $('#reviewStudentId').text('<?= htmlspecialchars($user['user_id']) ?>');
     $('#reviewName').text('<?= htmlspecialchars($user['first_name'] . ' ' . ($user['middle_name'] ? $user['middle_name'] . ' ' : '') . $user['last_name']) ?>');
     $('#reviewCourse').text('<?= htmlspecialchars($user['course'] ?? 'Not specified') ?>');
-    $('#reviewYearLevel').text('<?= htmlspecialchars($user['year_level'] ?? 'Not specified') ?>');
+    $('#reviewYearLevel').text('<?= htmlspecialchars($user['year'] ?? 'Not specified') ?>');
     $('#reviewGPA').text($('#gpa').val());
     $('#reviewFamilyIncome').text('₱' + $('#family_income').val());
     

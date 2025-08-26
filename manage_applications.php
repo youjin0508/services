@@ -160,8 +160,8 @@ $result = $conn->query($sql);
 :root { --blue:#003366; --light:#00509E; --gold:#FFD700; --gray:#F8F9FA; --sidebar-width:260px; }
 body { background: var(--gray); }
 /* Prevent overlap with fixed admin sidebar/header */
-.main-content { margin-left: var(--sidebar-width); padding: 20px; }
-@media (max-width: 991.98px){ .main-content{ margin-left:0; } }
+.main-content { margin-left: var(--sidebar-width); padding: 20px; padding-bottom: 96px; }
+@media (max-width: 991.98px){ .main-content{ margin-left:0; padding-bottom: 96px; } }
 
 .header { background: linear-gradient(135deg,var(--blue),var(--light)); color:#fff; padding:16px; border-radius:10px; margin:20px 0; }
 .stats-card { background:#fff; border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,.06); padding:20px; text-align:center; height:100%; }
@@ -176,7 +176,9 @@ body { background: var(--gray); }
 .btn-primary{ background:var(--blue); border:none; }
 .btn-primary:hover{ background:var(--light); }
 .btn-info{ background:#17a2b8; border:none; }
-.sticky-actions{ position: sticky; bottom: 0; background: #fff; padding: 8px; border-top: 1px solid #eee; }
+.sticky-actions{ position: sticky; bottom: 0; background: #fff; padding: 8px 12px; border-top: 1px solid #eee; z-index: 1030; box-shadow: 0 -4px 12px rgba(0,0,0,.05); }
+.container-fluid { overflow-x: hidden; }
+.btn-group .btn, .d-flex.gap-2 .btn { white-space: nowrap; }
 </style>
 </head>
 <body>

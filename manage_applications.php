@@ -138,20 +138,14 @@ $page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
 $offset = ($page - 1) * $perPage;
 
 // Total count for pagination
-$countSql = "SELECT COUNT(*) c FROM scholarship_applications sa JOIN scholarships s ON sa.scholarship_id=s.id JOIN users u ON sa.user_id=u.user_id $whereSql";
+$countSql = "SELECT COUNT(*) c FROM scholarship_applications sa JOIN scholarships s ON sa.scholarship_id=s.id JOIN users u ON sa.user_id=u.user_id ";
+if ($whereSql) { $countSql .= $whereSql; }
 $totalCount = 0; if ($rc = $conn->query($countSql)) { $totalCount = (int)($rc->fetch_assoc()['c'] ?? 0); }
 $totalPages = (int)ceil($totalCount / $perPage);
 
-$sql = "SELECT 
-          sa.id, sa.scholarship_id, sa.user_id, sa.application_date, sa.status, sa.approval_date,
-          s.name AS scholarship_name, s.type AS scholarship_type, s.amount AS scholarship_amount,
-          u.first_name, u.middle_name, u.last_name, u.email, u.phone, u.course, u.`year` AS year_level, u.section
-        FROM scholarship_applications sa
-        JOIN scholarships s ON sa.scholarship_id = s.id
-        JOIN users u ON sa.user_id = u.user_id
-        $whereSql
-        ORDER BY sa.application_date DESC
-        LIMIT $perPage OFFSET $offset";
+$sql = "SELECT sa.id, sa.scholarship_id, sa.user_id, sa.application_date, sa.status, sa.approval_date, s.name AS scholarship_name, s.type AS scholarship_type, s.amount AS scholarship_amount, u.first_name, u.middle_name, u.last_name, u.email, u.phone, u.course, u.`year` AS year_level, u.section FROM scholarship_applications sa JOIN scholarships s ON sa.scholarship_id = s.id JOIN users u ON sa.user_id = u.user_id ";
+if ($whereSql) { $sql .= $whereSql; }
+$sql .= " ORDER BY sa.application_date DESC LIMIT ".$offset.", ".$perPage;
 $result = $conn->query($sql);
 ?>
 <!DOCTYPE html>
@@ -497,6 +491,20 @@ body { background: var(--gray); }
       .fail(() => alert('Delete request failed.'));
   });
 
+  function postAction(action, id, extraData) {
+    const btn = $('[data-id="'+id+'"].do-'+action.replace('_','-') );
+    const original = btn.html();
+    btn.prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i>');
+    const payload = Object.assign({ action, application_id: id, csrf_token: $('#csrfToken').val() }, extraData || {});
+    $.post('manage_applications.php', payload)
+      .done(resp => { if (resp && resp.status === 'success') location.reload(); else alert((resp && resp.message) || 'Action failed.'); })
+      .fail(() => alert('Request failed.'))
+      .always(() => btn.prop('disabled', false).html(original));
+  }
+
+  $(document).on('click', '.do-approve', function(){ postAction('approve', $(this).data('id')); });
+  $(document).on('click', '.do-pending', function(){ postAction('set_pending', $(this).data('id')); });
+
   // Review workspace loader
   $(document).on('click', '.review-app', function(){
     const id = $(this).data('application-id');
@@ -521,36 +529,16 @@ body { background: var(--gray); }
     new bootstrap.Modal(document.getElementById('docLightboxModal')).show();
   });
 
-  // Reject templates
-  $('#rejectTemplate').on('change', function(){
-    const t = $(this).val(); if (t) $('#rejectReasonText').val(t);
-  });
-  $('#bulkRejectTemplate').on('change', function(){
-    const t = $(this).val(); if (t) $('#bulkRejectReasonText').val(t);
-  });
-
-  function postAction(action, id, extraData) {
-    const btn = $('[data-id="'+id+'"].do-'+action.replace('_','-') );
-    const original = btn.html();
-    btn.prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i>');
-    const payload = Object.assign({ action, application_id: id, csrf_token: $('#csrfToken').val() }, extraData || {});
-    $.post('manage_applications.php', payload)
-      .done(resp => { if (resp && resp.status === 'success') location.reload(); else alert((resp && resp.message) || 'Action failed.'); })
-      .fail(() => alert('Request failed.'))
-      .always(() => btn.prop('disabled', false).html(original));
-  }
-
-  $(document).on('click', '.do-approve', function(){ postAction('approve', $(this).data('id')); });
-  $(document).on('click', '.do-pending', function(){ postAction('set_pending', $(this).data('id')); });
-
-  // Reject with reason
+  // Reject with reason + templates
   let rejectModal;
   $(document).on('click', '.do-reject', function(){
     $('#rejectApplicationId').val($(this).data('id'));
     $('#rejectReasonText').val('');
+    $('#rejectTemplate').val('');
     rejectModal = new bootstrap.Modal(document.getElementById('rejectReasonModal'));
     rejectModal.show();
   });
+  $('#rejectTemplate').on('change', function(){ const t = $(this).val(); if (t) $('#rejectReasonText').val(t); });
   $('#confirmRejectBtn').on('click', function(){
     const id = $('#rejectApplicationId').val();
     const reason = ($('#rejectReasonText').val() || '').trim();
@@ -580,9 +568,11 @@ body { background: var(--gray); }
   $('#bulkReject').on('click', function(){
     if (!getSelectedIds().length) { alert('No applications selected.'); return; }
     $('#bulkRejectReasonText').val('');
+    $('#bulkRejectTemplate').val('');
     bulkRejectModal = new bootstrap.Modal(document.getElementById('bulkRejectModal'));
     bulkRejectModal.show();
   });
+  $('#bulkRejectTemplate').on('change', function(){ const t = $(this).val(); if (t) $('#bulkRejectReasonText').val(t); });
   $('#confirmBulkRejectBtn').on('click', function(){
     const reason = ($('#bulkRejectReasonText').val() || '').trim();
     if (!reason) { alert('Please provide a rejection reason.'); return; }

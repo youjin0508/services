@@ -252,7 +252,9 @@ body { background: var(--gray); }
       ?>
       <div class="card card-app application-item"
            data-name="<?= strtolower(htmlspecialchars($fullName.' '.$row['scholarship_name'])) ?>"
-           data-status="<?= htmlspecialchars($status) ?>">
+           data-status="<?= htmlspecialchars($status) ?>"
+           data-scholarship-id="<?= (int)$row['scholarship_id'] ?>"
+           data-applied="<?= date('Y-m-d', strtotime($row['application_date'])) ?>">
         <div class="card-header">
           <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
             <div class="form-check">
@@ -369,22 +371,22 @@ body { background: var(--gray); }
   function filterClient() {
     const q = ($('#searchInput').val() || '').toLowerCase();
     const s = ($('#statusFilter').val() || '').toLowerCase();
-    const scholarship = $('#scholarshipFilter').val();
+    const scholarshipId = $('#scholarshipFilter').val();
     const from = $('#dateFrom').val();
     const to = $('#dateTo').val();
 
     $('.application-item').each(function(){
       const name = $(this).data('name') || '';
       const st = $(this).data('status') || '';
+      const applied = ($(this).data('applied') || '').toString();
+      const cardScholarshipId = (($(this).data('scholarship-id') || '')+ '').toString();
       let show = true;
 
       if (q && name.indexOf(q) === -1) show = false;
       if (s && st !== s) show = false;
-      if (scholarship && $(this).find('.card-header h6').text().toLowerCase().indexOf(scholarship) === -1) show = false;
-
-      const appDate = $(this).find('.card-body p:last').text().match(/\d{4}-\d{2}-\d{2}/)[0]; // Extract date string
-      if (from && appDate < from) show = false;
-      if (to && appDate > to) show = false;
+      if (scholarshipId && cardScholarshipId !== String(scholarshipId)) show = false;
+      if (from && applied && applied < from) show = false;
+      if (to && applied && applied > to) show = false;
 
       $(this).toggle(show);
     });

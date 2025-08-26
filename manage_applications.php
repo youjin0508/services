@@ -4,40 +4,78 @@ require_once 'config.php';
 
 // Restrict to Scholarship Admin or Admin
 if (!isset($_SESSION['user_id']) || !isset($_SESSION['role']) || !in_array($_SESSION['role'], ['Scholarship Admin', 'Admin'])) {
-    header("Location: login.php");
-    exit();
+	header("Location: login.php");
+	exit();
 }
 
 // Handle Approve/Reject/Pending (AJAX)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'], $_POST['application_id'])) {
-    header('Content-Type: application/json');
-    $action = $_POST['action'];
-    $applicationId = (int)$_POST['application_id'];
+	header('Content-Type: application/json');
+	$action = $_POST['action'];
+	$applicationId = (int)$_POST['application_id'];
 
-    try {
-        if ($action === 'approve') {
-            $stmt = $conn->prepare("UPDATE scholarship_applications SET status='approved', approval_date=NOW() WHERE id=?");
-            $stmt->bind_param("i", $applicationId);
-            $ok = $stmt->execute(); $stmt->close();
-            if (!$ok) throw new Exception("Approve failed.");
-            echo json_encode(['status'=>'success','message'=>'Application approved']); exit();
-        } elseif ($action === 'reject') {
-            $stmt = $conn->prepare("UPDATE scholarship_applications SET status='rejected', approval_date=NULL WHERE id=?");
-            $stmt->bind_param("i", $applicationId);
-            $ok = $stmt->execute(); $stmt->close();
-            if (!$ok) throw new Exception("Reject failed.");
-            echo json_encode(['status'=>'success','message'=>'Application rejected']); exit();
-        } elseif ($action === 'set_pending') {
-            $stmt = $conn->prepare("UPDATE scholarship_applications SET status='pending', approval_date=NULL WHERE id=?");
-            $stmt->bind_param("i", $applicationId);
-            $ok = $stmt->execute(); $stmt->close();
-            if (!$ok) throw new Exception("Status update failed.");
-            echo json_encode(['status'=>'success','message'=>'Application set to pending']); exit();
-        }
-        throw new Exception('Invalid action.');
-    } catch (Exception $e) {
-        echo json_encode(['status'=>'error','message'=>$e->getMessage()]); exit();
-    }
+	try {
+		// Fetch application owner and scholarship for notifications/audit context
+		$appStmt = $conn->prepare("SELECT sa.user_id, s.name AS scholarship_name FROM scholarship_applications sa JOIN scholarships s ON s.id = sa.scholarship_id WHERE sa.id = ?");
+		$appStmt->bind_param("i", $applicationId);
+		$appStmt->execute();
+		$appInfo = $appStmt->get_result()->fetch_assoc();
+		$appStmt->close();
+		if (!$appInfo) throw new Exception('Application not found.');
+
+		if ($action === 'approve') {
+			$stmt = $conn->prepare("UPDATE scholarship_applications SET status='approved', approval_date=NOW(), rejection_reason=NULL, reviewed_by=?, reviewed_at=NOW() WHERE id=?");
+			$reviewedBy = $_SESSION['user_id'];
+			$stmt->bind_param("si", $reviewedBy, $applicationId);
+			$ok = $stmt->execute();
+			$stmt->close();
+			if (!$ok) throw new Exception("Approve failed.");
+
+			// Notify student
+			$ns = $conn->prepare("INSERT INTO scholarship_notifications (user_id, title, message, type, is_read, created_at) VALUES (?, ?, ?, 'success', 0, NOW())");
+			$title = 'Application Approved';
+			$message = 'Your application for '.($appInfo['scholarship_name'] ?? 'the scholarship').' has been approved.';
+			$ns->bind_param("sss", $appInfo['user_id'], $title, $message);
+			$ns->execute();
+			$ns->close();
+
+			echo json_encode(['status'=>'success','message'=>'Application approved']);
+			exit();
+		} elseif ($action === 'reject') {
+			$reason = trim($_POST['rejection_reason'] ?? '');
+			if ($reason === '') throw new Exception('Rejection reason is required.');
+			$stmt = $conn->prepare("UPDATE scholarship_applications SET status='rejected', approval_date=NULL, rejection_reason=?, reviewed_by=?, reviewed_at=NOW() WHERE id=?");
+			$reviewedBy = $_SESSION['user_id'];
+			$stmt->bind_param("ssi", $reason, $reviewedBy, $applicationId);
+			$ok = $stmt->execute();
+			$stmt->close();
+			if (!$ok) throw new Exception("Reject failed.");
+
+			// Notify student
+			$ns = $conn->prepare("INSERT INTO scholarship_notifications (user_id, title, message, type, is_read, created_at) VALUES (?, ?, ?, 'error', 0, NOW())");
+			$title = 'Application Rejected';
+			$message = 'Your application for '.($appInfo['scholarship_name'] ?? 'the scholarship').' was rejected. Reason: '.$reason;
+			$ns->bind_param("sss", $appInfo['user_id'], $title, $message);
+			$ns->execute();
+			$ns->close();
+
+			echo json_encode(['status'=>'success','message'=>'Application rejected']);
+			exit();
+		} elseif ($action === 'set_pending') {
+			$stmt = $conn->prepare("UPDATE scholarship_applications SET status='pending', approval_date=NULL, reviewed_by=?, reviewed_at=NOW() WHERE id=?");
+			$reviewedBy = $_SESSION['user_id'];
+			$stmt->bind_param("si", $reviewedBy, $applicationId);
+			$ok = $stmt->execute();
+			$stmt->close();
+			if (!$ok) throw new Exception("Status update failed.");
+			echo json_encode(['status'=>'success','message'=>'Application set to pending']);
+			exit();
+		}
+		throw new Exception('Invalid action.');
+	} catch (Exception $e) {
+		echo json_encode(['status'=>'error','message'=>$e->getMessage()]);
+		exit();
+	}
 }
 
 // Stats
@@ -163,10 +201,13 @@ body { background: var(--gray); }
           </div>
 
           <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3">
-            <div>
+            <div class="d-flex gap-2">
               <button class="btn btn-info btn-sm view-documents" data-application-id="<?= (int)$row['id'] ?>" data-bs-toggle="modal" data-bs-target="#viewDocumentsModal">
                 <i class="fa fa-file-alt"></i> View Documents
               </button>
+              <a class="btn btn-secondary btn-sm" href="download_application_documents_zip.php?application_id=<?= (int)$row['id'] ?>" target="_blank">
+                <i class="fa fa-download"></i> Download ZIP
+              </a>
             </div>
             <div class="btn-group">
               <?php if ($status === 'pending'): ?>
@@ -197,6 +238,27 @@ body { background: var(--gray); }
   </div></div>
 </div>
 
+<!-- Reject Reason Modal -->
+<div class="modal fade" id="rejectReasonModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header">
+      <h5 class="modal-title"><i class="fa fa-comment-dots me-2"></i> Rejection Reason</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="rejectApplicationId" value="">
+      <div class="mb-3">
+        <label class="form-label">Please provide a reason</label>
+        <textarea id="rejectReasonText" class="form-control" rows="3" placeholder="Enter reason..." required></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+      <button type="button" class="btn btn-danger" id="confirmRejectBtn"><i class="fa fa-times"></i> Reject</button>
+    </div>
+  </div></div>
+</div>
+
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
@@ -224,19 +286,37 @@ body { background: var(--gray); }
      .fail(() => $('#documentsModalBody').html('<div class="alert alert-danger">Error loading documents.</div>'));
   });
 
-  function postAction(action, id) {
+  function postAction(action, id, extraData) {
     const btn = $('[data-id="'+id+'"].do-'+action.replace('_','-') );
     const original = btn.html();
     btn.prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i>');
-    $.post('manage_applications.php', { action, application_id: id })
+    const payload = Object.assign({ action, application_id: id }, extraData || {});
+    $.post('manage_applications.php', payload)
       .done(resp => { if (resp && resp.status === 'success') location.reload(); else alert((resp && resp.message) || 'Action failed.'); })
       .fail(() => alert('Request failed.'))
       .always(() => btn.prop('disabled', false).html(original));
   }
 
   $(document).on('click', '.do-approve', function(){ postAction('approve', $(this).data('id')); });
-  $(document).on('click', '.do-reject', function(){ postAction('reject', $(this).data('id')); });
   $(document).on('click', '.do-pending', function(){ postAction('set_pending', $(this).data('id')); });
+
+  // Reject with reason
+  let rejectModal;
+  $(document).on('click', '.do-reject', function(){
+    $('#rejectApplicationId').val($(this).data('id'));
+    $('#rejectReasonText').val('');
+    rejectModal = new bootstrap.Modal(document.getElementById('rejectReasonModal'));
+    rejectModal.show();
+  });
+  $('#confirmRejectBtn').on('click', function(){
+    const id = $('#rejectApplicationId').val();
+    const reason = ($('#rejectReasonText').val() || '').trim();
+    if (!reason) { alert('Please provide a rejection reason.'); return; }
+    postAction('reject', id, { rejection_reason: reason });
+    if (rejectModal) rejectModal.hide();
+  });
+
+  filter();
 })();
 </script>
 </body>

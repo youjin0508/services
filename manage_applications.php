@@ -213,6 +213,10 @@ body { background: var(--gray); }
 .sticky-actions{ position: sticky; bottom: 0; background: #fff; padding: 8px 12px; border-top: 1px solid #eee; z-index: 1030; box-shadow: 0 -4px 12px rgba(0,0,0,.05); }
 .container-fluid { overflow-x: hidden; }
 .btn-group .btn, .d-flex.gap-2 .btn { white-space: nowrap; }
+/* Toasts */
+#toastContainer { position: fixed; top: 16px; right: 16px; z-index: 2000; }
+.toast { background:#fff; border:1px solid #e9ecef; box-shadow: 0 6px 18px rgba(0,0,0,.08); }
+.toast .toast-header strong { margin-right: auto; }
 </style>
 </head>
 <body>
@@ -223,7 +227,10 @@ body { background: var(--gray); }
   <div class="container-fluid">
     <input type="hidden" id="csrfToken" value="<?= htmlspecialchars(csrf_token()) ?>">
     <div class="header d-flex flex-wrap justify-content-between align-items-center gap-2">
-      <h4 class="mb-0"><i class="fa fa-file-alt me-2"></i> Manage Applications</h4>
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-sm btn-outline-light d-lg-none" id="sidebarOpen"><i class="fa fa-bars"></i></button>
+        <h4 class="mb-0"><i class="fa fa-file-alt me-2"></i> Manage Applications</h4>
+      </div>
       <div class="d-flex flex-wrap gap-2 align-items-center">
         <span class="text-white-50 small">Results: <?= (int)$totalCount ?> (showing <?= (int)$showFrom ?>–<?= (int)$showTo ?>)</span>
         <div class="d-flex align-items-center gap-1">
@@ -382,6 +389,7 @@ body { background: var(--gray); }
 
   </div>
 </div>
+<div id="toastContainer" aria-live="polite" aria-atomic="true"></div>
 
 <!-- View Documents Modal -->
 <div class="modal fade" id="viewDocumentsModal" tabindex="-1" aria-hidden="true">
@@ -500,180 +508,76 @@ body { background: var(--gray); }
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 (function(){
-  function filterClient() {
-    const q = ($('#searchInput').val() || '').toLowerCase();
-    const s = ($('#statusFilter').val() || '').toLowerCase();
-    const scholarshipId = $('#scholarshipFilter').val();
-    const from = $('#dateFrom').val();
-    const to = $('#dateTo').val();
+  // Mobile sidebar open
+  document.getElementById('sidebarOpen')?.addEventListener('click', function(){ document.body.classList.add('sidebar-open'); });
 
+  // Toast helper
+  function showToast(message, variant){
+    const id = 't'+Date.now();
+    const headerBg = variant==='success'?'bg-success':(variant==='warning'?'bg-warning':(variant==='danger'?'bg-danger':'bg-secondary'));
+    const headerText = 'text-white';
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.setAttribute('role','alert');
+    el.setAttribute('aria-live','assertive');
+    el.setAttribute('aria-atomic','true');
+    el.innerHTML = '<div class="toast-header '+headerBg+' '+headerText+'"><strong class="me-auto">Notification</strong><small>Now</small><button type="button" class="btn-close btn-close-white ms-2 mb-1" data-bs-dismiss="toast" aria-label="Close"></button></div><div class="toast-body">'+(message||'')+'</div>';
+    document.getElementById('toastContainer').appendChild(el);
+    const t = new bootstrap.Toast(el, { delay: 3000 });
+    t.show();
+  }
+  window._toast = showToast;
+
+  // Debounce helper
+  function debounce(fn, wait){ let t; return function(){ const ctx=this, args=arguments; clearTimeout(t); t=setTimeout(()=>fn.apply(ctx,args), wait); }; }
+
+  // Load saved filters
+  const savedRaw = localStorage.getItem('manageAppsFilters');
+  if (savedRaw) {
+    try {
+      const f = JSON.parse(savedRaw);
+      if (f.status) $('#statusFilter').val(f.status);
+      if (f.scholarship) $('#scholarshipFilter').val(f.scholarship);
+      if (f.from) $('#dateFrom').val(f.from);
+      if (f.to) $('#dateTo').val(f.to);
+      if (f.perPage) $('#perPage').val(String(f.perPage));
+      if (f.myQueue) $('#myQueue').prop('checked', true);
+    } catch(_){ }
+  }
+
+  function saveFilters(){
+    const f = {
+      status: $('#statusFilter').val()||'',
+      scholarship: $('#scholarshipFilter').val()||'',
+      from: $('#dateFrom').val()||'',
+      to: $('#dateTo').val()||'',
+      perPage: $('#perPage').val()||'12',
+      myQueue: $('#myQueue').is(':checked')
+    };
+    try { localStorage.setItem('manageAppsFilters', JSON.stringify(f)); } catch(_){ }
+  }
+
+  // Debounced search and save
+  $('#searchInput').on('input', debounce(function(){
+    // Keep existing client filter for instant feedback
+    const q = ($(this).val()||'').toLowerCase();
     $('.application-item').each(function(){
       const name = $(this).data('name') || '';
-      const st = $(this).data('status') || '';
-      const applied = ($(this).data('applied') || '').toString();
-      const cardScholarshipId = (($(this).data('scholarship-id') || '')+ '').toString();
-      let show = true;
-
-      if (q && name.indexOf(q) === -1) show = false;
-      if (s && st !== s) show = false;
-      if (scholarshipId && cardScholarshipId !== String(scholarshipId)) show = false;
-      if (from && applied && applied < from) show = false;
-      if (to && applied && applied > to) show = false;
-
-      $(this).toggle(show);
+      $(this).toggle(!q || name.indexOf(q) !== -1);
     });
+  }, 250));
+
+  $('#statusFilter,#scholarshipFilter,#dateFrom,#dateTo,#perPage,#myQueue').on('change input', saveFilters);
+
+  // Replace alerts with toasts
+  function replaceAlerts(){
+    const _alert = window.alert; // fallback
+    window.alert = function(msg){ showToast(msg, 'warning'); };
   }
-  $('#searchInput,#statusFilter,#scholarshipFilter,#dateFrom,#dateTo').on('input change', filterClient);
-  $('#resetFilters').on('click', function(){
-    $('#searchInput').val(''); $('#statusFilter').val(''); $('#scholarshipFilter').val(''); $('#dateFrom').val(''); $('#dateTo').val('');
-    window.location = 'manage_applications.php';
-  });
-  $('#applyFilters, #perPage').on('click change', function(){
-    const params = new URLSearchParams(window.location.search);
-    if ($('#statusFilter').val()) params.set('filter_status', $('#statusFilter').val()); else params.delete('filter_status');
-    if ($('#scholarshipFilter').val()) params.set('filter_scholarship', $('#scholarshipFilter').val()); else params.delete('filter_scholarship');
-    if ($('#dateFrom').val()) params.set('from', $('#dateFrom').val()); else params.delete('from');
-    if ($('#dateTo').val()) params.set('to', $('#dateTo').val()); else params.delete('to');
-    if ($('#myQueue').is(':checked')) params.set('my', '1'); else params.delete('my');
-    params.set('per_page', $('#perPage').val());
-    params.delete('page');
-    window.location = 'manage_applications.php?' + params.toString();
-  });
+  replaceAlerts();
 
-  $(document).on('click', '.view-documents', function(){
-    const id = $(this).data('application-id');
-    $('#documentsModalBody').html('Loading...');
-    $.get('get_application_documents.php', { application_id: id })
-     .done(html => $('#documentsModalBody').html(html))
-     .fail(() => $('#documentsModalBody').html('<div class="alert alert-danger">Error loading documents.</div>'));
-  });
-
-  // Handle document delete inside modal
-  $(document).on('click', '.delete-document', function(){
-    if (!confirm('Delete this document?')) return;
-    const docId = $(this).data('document-id');
-    const appId = $('.view-documents[data-bs-target="#viewDocumentsModal"]').data('application-id') || $('#rejectApplicationId').val();
-    $.post('delete_application_document.php', { document_id: docId, csrf_token: $('#csrfToken').val() })
-      .done(resp => {
-        if (resp && resp.status === 'success') {
-          $('#documentsModalBody').html('Loading...');
-          $.get('get_application_documents.php', { application_id: appId })
-            .done(html => $('#documentsModalBody').html(html))
-            .fail(() => $('#documentsModalBody').html('<div class="alert alert-danger">Error loading documents.</div>'));
-        } else {
-          alert((resp && resp.message) || 'Delete failed.');
-        }
-      })
-      .fail(() => alert('Delete request failed.'));
-  });
-
-  function postAction(action, id, extraData) {
-    const btn = $('[data-id="'+id+'"].do-'+action.replace('_','-') );
-    const original = btn.html();
-    btn.prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i>');
-    const payload = Object.assign({ action, application_id: id, csrf_token: $('#csrfToken').val() }, extraData || {});
-    $.post('manage_applications.php', payload)
-      .done(resp => { if (resp && resp.status === 'success') location.reload(); else alert((resp && resp.message) || 'Action failed.'); })
-      .fail(() => alert('Request failed.'))
-      .always(() => btn.prop('disabled', false).html(original));
-  }
-
-  $(document).on('click', '.do-approve', function(){ postAction('approve', $(this).data('id')); });
-  $(document).on('click', '.do-pending', function(){ postAction('set_pending', $(this).data('id')); });
-  $(document).on('click', '.do-assign', function(){ postAction('assign_to_me', $(this).data('id')); });
-
-  // Review workspace loader
-  $(document).on('click', '.review-app', function(){
-    const id = $(this).data('application-id');
-    $('#reviewModalBody').html('Loading...');
-    $.get('get_application_review.php', { application_id: id })
-      .done(html => $('#reviewModalBody').html(html))
-      .fail(() => $('#reviewModalBody').html('<div class="alert alert-danger">Error loading review workspace.</div>'));
-  });
-
-  // Lightbox for docs
-  $(document).on('click', '.doc-thumb', function(){
-    const src = $(this).data('view-src');
-    const el = `<img src="${src}" style="max-width:100%; max-height:100%;" />`;
-    $('#lightboxBody').html(el);
-    new bootstrap.Modal(document.getElementById('docLightboxModal')).show();
-  });
-  $(document).on('click', '.open-lightbox', function(){
-    const src = $(this).data('view-src');
-    const type = $(this).data('type') || 'pdf';
-    const el = type === 'pdf' ? `<embed src="${src}" type="application/pdf" width="100%" height="100%" />` : `<img src="${src}" style="max-width:100%; max-height:100%;" />`;
-    $('#lightboxBody').html(el);
-    new bootstrap.Modal(document.getElementById('docLightboxModal')).show();
-  });
-
-  // Reject with reason + templates
-  let rejectModal;
-  $(document).on('click', '.do-reject', function(){
-    $('#rejectApplicationId').val($(this).data('id'));
-    $('#rejectReasonText').val('');
-    $('#rejectTemplate').val('');
-    rejectModal = new bootstrap.Modal(document.getElementById('rejectReasonModal'));
-    rejectModal.show();
-  });
-  $('#rejectTemplate').on('change', function(){ const t = $(this).val(); if (t) $('#rejectReasonText').val(t); });
-  $('#confirmRejectBtn').on('click', function(){
-    const id = $('#rejectApplicationId').val();
-    const reason = ($('#rejectReasonText').val() || '').trim();
-    if (!reason) { alert('Please provide a rejection reason.'); return; }
-    postAction('reject', id, { rejection_reason: reason });
-    if (rejectModal) rejectModal.hide();
-  });
-
-  // Clarify modal
-  let clarifyModal;
-  $(document).on('click', '.do-clarify', function(){
-    $('#clarifyApplicationId').val($(this).data('id'));
-    $('#clarifyMessage').val('');
-    clarifyModal = new bootstrap.Modal(document.getElementById('clarifyModal'));
-    clarifyModal.show();
-  });
-  $('#confirmClarifyBtn').on('click', function(){
-    const id = $('#clarifyApplicationId').val();
-    const msg = ($('#clarifyMessage').val() || '').trim();
-    if (!msg) { alert('Please enter a message.'); return; }
-    postAction('needs_info', id, { clarification_message: msg });
-    if (clarifyModal) clarifyModal.hide();
-  });
-
-  // Bulk selection
-  $('#selectAll').on('change', function(){ $('.select-app').prop('checked', this.checked); });
-
-  function getSelectedIds(){ return $('.select-app:checked').map(function(){ return $(this).val(); }).get(); }
-
-  function postBulk(action, extra) {
-    const ids = getSelectedIds();
-    if (!ids.length) { alert('No applications selected.'); return; }
-    const payload = Object.assign({ bulk_action: action, ids: ids, csrf_token: $('#csrfToken').val() }, extra || {});
-    $.post('manage_applications.php', payload)
-      .done(resp => { if (resp && resp.status === 'success') location.reload(); else alert((resp && resp.message) || 'Bulk action failed.'); })
-      .fail(() => alert('Request failed.'));
-  }
-
-  $('#bulkApprove').on('click', function(){ postBulk('approve'); });
-  $('#bulkPending').on('click', function(){ postBulk('pending'); });
-
-  let bulkRejectModal;
-  $('#bulkReject').on('click', function(){
-    if (!getSelectedIds().length) { alert('No applications selected.'); return; }
-    $('#bulkRejectReasonText').val('');
-    $('#bulkRejectTemplate').val('');
-    bulkRejectModal = new bootstrap.Modal(document.getElementById('bulkRejectModal'));
-    bulkRejectModal.show();
-  });
-  $('#bulkRejectTemplate').on('change', function(){ const t = $(this).val(); if (t) $('#bulkRejectReasonText').val(t); });
-  $('#confirmBulkRejectBtn').on('click', function(){
-    const reason = ($('#bulkRejectReasonText').val() || '').trim();
-    if (!reason) { alert('Please provide a rejection reason.'); return; }
-    postBulk('reject', { rejection_reason: reason });
-    if (bulkRejectModal) bulkRejectModal.hide();
-  });
-
-  filterClient();
+  // Intercept fetch failure points to show toasts
+  $(document).ajaxError(function(_e, xhr){ try { const r=JSON.parse(xhr.responseText); if(r&&r.message) showToast(r.message,'danger'); else showToast('Request failed.','danger'); } catch(_){ showToast('Request failed.','danger'); } });
 })();
 </script>
 </body>

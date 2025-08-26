@@ -1,10 +1,12 @@
 <?php
 session_start();
 require_once 'config.php';
+require_once 'csrf.php';
 header('Content-Type: application/json');
 if (!isset($_SESSION['user_id'])) { echo json_encode(['status'=>'error','message'=>'User not authenticated']); exit(); }
 
 try {
+    if (!csrf_validate($_POST['csrf_token'] ?? null)) throw new Exception('Invalid CSRF token.');
     if (!isset($_POST['scholarship_id'], $_POST['gpa'], $_POST['family_income'])) throw new Exception('Missing required application information.');
     $scholarship_id = (int)$_POST['scholarship_id'];
     $user_id = $_SESSION['user_id'];

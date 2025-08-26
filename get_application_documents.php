@@ -17,8 +17,8 @@ while ($row = $res->fetch_assoc()) {
   $viewUrl = 'view_scholarship_document.php?id='.$docId;
   $sizeKb = round(((int)$row['file_size']) / 1024, 2);
   $mime = strtolower($row['mime_type'] ?? '');
-  $isImage = str_starts_with($mime, 'image/');
-  $isPdf = $mime === 'application/pdf';
+  $isImage = (strpos($mime, 'image/') === 0);
+  $isPdf = ($mime === 'application/pdf');
 
   echo '<div class="col-md-6">';
   echo '<div class="card shadow-sm">';

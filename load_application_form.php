@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once 'config.php';
+require_once 'csrf.php';
 if (!isset($_SESSION['user_id']) || !isset($_GET['scholarship_id'])) {
     echo '<div class="alert alert-danger">Access denied or missing scholarship information.</div>';
     exit();
@@ -63,6 +64,7 @@ if (!empty($scholarship['documents_required'])) {
         $required_documents = [$scholarship['documents_required']];
     }
 }
+$csrfToken = csrf_token();
 ?>
 <style>
 :root {
@@ -520,11 +522,43 @@ if (!empty($scholarship['documents_required'])) {
 <script>
 let currentStep = 1;
 let uploadedFiles = {};
+const CSRF_TOKEN = '<?= htmlspecialchars($csrfToken) ?>';
+const DRAFT_KEY = 'scholarship_draft_<?= htmlspecialchars($user_id) ?>_<?= (int)$scholarship_id ?>';
+
 // Initialize document uploads
 $(document).ready(function() {
     initializeDocumentUploads();
     checkEligibility();
+    loadDraft();
+    window.addEventListener('beforeunload', function (e) {
+        if (hasUnsavedData()) {
+            e.preventDefault();
+            e.returnValue = '';
+        }
+    });
 });
+function hasUnsavedData() {
+    return (!!$('#gpa').val() || !!$('#family_income').val() || Object.keys(uploadedFiles).length > 0);
+}
+function saveDraft() {
+    const draft = {
+        gpa: $('#gpa').val() || '',
+        family_income: $('#family_income').val() || '',
+        docs: Object.keys(uploadedFiles).map(i => ({ index: i, name: uploadedFiles[i].name, type: uploadedFiles[i].documentType }))
+    };
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch(_) {}
+}
+function loadDraft() {
+    try {
+        const raw = localStorage.getItem(DRAFT_KEY);
+        if (!raw) return;
+        const draft = JSON.parse(raw);
+        if (draft.gpa) $('#gpa').val(draft.gpa);
+        if (draft.family_income) $('#family_income').val(draft.family_income);
+    } catch(_) {}
+}
+$('#gpa, #family_income').on('input', saveDraft);
+
 function initializeDocumentUploads() {
     $('.document-upload').click(function() {
         $(this).find('input[type="file"]').click();
@@ -580,6 +614,7 @@ function handleFileUpload(file, uploadElement) {
         size: file.size,
         type: file.type
     };
+    saveDraft();
     
     // Show preview
     showFilePreview(index, file.name, file.size);
@@ -789,6 +824,7 @@ function submitApplication() {
     formData.append('scholarship_id', <?= $scholarship_id ?>);
     formData.append('gpa', $('#gpa').val());
     formData.append('family_income', $('#family_income').val());
+    formData.append('csrf_token', CSRF_TOKEN);
     
     // Append files
     Object.keys(uploadedFiles).forEach(index => {
@@ -813,6 +849,7 @@ function submitApplication() {
         dataType: 'json',
         success: function(result) {
             if (result && result.status === 'success') {
+                try { localStorage.removeItem(DRAFT_KEY); } catch(_) {}
                 showSuccessMessage(result.message);
             } else {
                 const msg = (result && result.message) ? result.message : 'Submission failed. Please try again.';

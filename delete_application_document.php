@@ -1,10 +1,12 @@
 <?php
 session_start();
 require_once 'config.php';
+require_once 'csrf.php';
 header('Content-Type: application/json');
 if (!isset($_SESSION['user_id']) || !isset($_SESSION['role']) || !in_array($_SESSION['role'], ['Scholarship Admin','Admin'])) { http_response_code(403); echo json_encode(['status'=>'error','message'=>'Unauthorized']); exit(); }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_POST['document_id'])) { http_response_code(400); echo json_encode(['status'=>'error','message'=>'Missing document ID']); exit(); }
+if (!csrf_validate($_POST['csrf_token'] ?? null)) { http_response_code(403); echo json_encode(['status'=>'error','message'=>'Invalid CSRF token']); exit(); }
 $docId = (int)$_POST['document_id'];
 
 try {

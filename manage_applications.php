@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once 'config.php';
+require_once 'csrf.php';
 
 // Restrict to Scholarship Admin or Admin
 if (!isset($_SESSION['user_id']) || !isset($_SESSION['role']) || !in_array($_SESSION['role'], ['Scholarship Admin', 'Admin'])) {
@@ -8,9 +9,41 @@ if (!isset($_SESSION['user_id']) || !isset($_SESSION['role']) || !in_array($_SES
 	exit();
 }
 
-// Handle Approve/Reject/Pending (AJAX)
+// Bulk actions
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_action'], $_POST['ids'])) {
+	header('Content-Type: application/json');
+	if (!csrf_validate($_POST['csrf_token'] ?? null)) { http_response_code(403); echo json_encode(['status'=>'error','message'=>'Invalid CSRF token']); exit(); }
+	$bulk = $_POST['bulk_action'];
+	$ids = array_filter(array_map('intval', (array)$_POST['ids']));
+	if (!$ids) { echo json_encode(['status'=>'error','message'=>'No items selected']); exit(); }
+	$reviewedBy = $_SESSION['user_id'];
+	try {
+		if ($bulk === 'approve') {
+			$stmt = $conn->prepare("UPDATE scholarship_applications SET status='approved', approval_date=NOW(), rejection_reason=NULL, reviewed_by=?, reviewed_at=NOW() WHERE id=?");
+			foreach ($ids as $id) { $stmt->bind_param("si", $reviewedBy, $id); $stmt->execute(); }
+			$stmt->close();
+			echo json_encode(['status'=>'success']); exit();
+		} elseif ($bulk === 'reject') {
+			$reason = trim($_POST['rejection_reason'] ?? '');
+			if ($reason==='') { echo json_encode(['status'=>'error','message'=>'Rejection reason is required']); exit(); }
+			$stmt = $conn->prepare("UPDATE scholarship_applications SET status='rejected', approval_date=NULL, rejection_reason=?, reviewed_by=?, reviewed_at=NOW() WHERE id=?");
+			foreach ($ids as $id) { $stmt->bind_param("ssi", $reason, $reviewedBy, $id); $stmt->execute(); }
+			$stmt->close();
+			echo json_encode(['status'=>'success']); exit();
+		} elseif ($bulk === 'pending') {
+			$stmt = $conn->prepare("UPDATE scholarship_applications SET status='pending', approval_date=NULL, reviewed_by=?, reviewed_at=NOW() WHERE id=?");
+			foreach ($ids as $id) { $stmt->bind_param("si", $reviewedBy, $id); $stmt->execute(); }
+			$stmt->close();
+			echo json_encode(['status'=>'success']); exit();
+		}
+		echo json_encode(['status'=>'error','message'=>'Invalid bulk action']); exit();
+	} catch (Exception $e) { echo json_encode(['status'=>'error','message'=>$e->getMessage()]); exit(); }
+}
+
+// Handle single Approve/Reject/Pending (AJAX)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'], $_POST['application_id'])) {
 	header('Content-Type: application/json');
+	if (!csrf_validate($_POST['csrf_token'] ?? null)) { http_response_code(403); echo json_encode(['status'=>'error','message'=>'Invalid CSRF token']); exit(); }
 	$action = $_POST['action'];
 	$applicationId = (int)$_POST['application_id'];
 
@@ -85,7 +118,21 @@ if ($r=$conn->query("SELECT COUNT(*) c FROM scholarship_applications WHERE statu
 if ($r=$conn->query("SELECT COUNT(*) c FROM scholarship_applications WHERE status='approved'")) $totals['approved']=(int)$r->fetch_assoc()['c'];
 if ($r=$conn->query("SELECT COUNT(*) c FROM scholarship_applications WHERE status='rejected'")) $totals['rejected']=(int)$r->fetch_assoc()['c'];
 
-// Fetch applications — matches schema (users.`year`)
+// Filters
+echo ""; // placeholder
+$scholarshipsList = [];
+$qq = $conn->query("SELECT id, name FROM scholarships ORDER BY name ASC");
+while ($rr = $qq->fetch_assoc()) $scholarshipsList[] = $rr;
+$qq->close();
+
+// Fetch applications with optional filters
+$where = [];
+if (!empty($_GET['filter_scholarship'])) { $sid = (int)$_GET['filter_scholarship']; $where[] = "sa.scholarship_id=".$sid; }
+if (!empty($_GET['filter_status'])) { $st = $conn->real_escape_string($_GET['filter_status']); $where[] = "sa.status='".$st."'"; }
+if (!empty($_GET['from'])) { $from = $conn->real_escape_string($_GET['from']); $where[] = "DATE(sa.application_date) >= '".$from."'"; }
+if (!empty($_GET['to'])) { $to = $conn->real_escape_string($_GET['to']); $where[] = "DATE(sa.application_date) <= '".$to."'"; }
+$whereSql = $where ? ('WHERE '.implode(' AND ',$where)) : '';
+
 $sql = "SELECT 
           sa.id, sa.scholarship_id, sa.user_id, sa.application_date, sa.status, sa.approval_date,
           s.name AS scholarship_name, s.type AS scholarship_type, s.amount AS scholarship_amount,
@@ -93,6 +140,7 @@ $sql = "SELECT
         FROM scholarship_applications sa
         JOIN scholarships s ON sa.scholarship_id = s.id
         JOIN users u ON sa.user_id = u.user_id
+        $whereSql
         ORDER BY sa.application_date DESC";
 $result = $conn->query($sql);
 ?>
@@ -124,6 +172,7 @@ body { background: var(--gray); }
 .btn-primary{ background:var(--blue); border:none; }
 .btn-primary:hover{ background:var(--light); }
 .btn-info{ background:#17a2b8; border:none; }
+.sticky-actions{ position: sticky; bottom: 0; background: #fff; padding: 8px; border-top: 1px solid #eee; }
 </style>
 </head>
 <body>
@@ -132,6 +181,7 @@ body { background: var(--gray); }
 
 <div class="main-content">
   <div class="container-fluid">
+    <input type="hidden" id="csrfToken" value="<?= htmlspecialchars(csrf_token()) ?>">
     <div class="header d-flex flex-wrap justify-content-between align-items-center gap-2">
       <h4 class="mb-0"><i class="fa fa-file-alt me-2"></i> Manage Applications</h4>
       <div class="d-flex gap-2">
@@ -148,11 +198,13 @@ body { background: var(--gray); }
       <div class="col-sm-6 col-lg-3"><div class="stats-card"><div class="stats-number"><?= $totals['rejected'] ?></div><div>Rejected</div></div></div>
     </div>
 
-    <div class="row g-2 mb-3 controls">
-      <div class="col-12 col-md-6 col-lg-4">
+    <div class="row g-2 mb-3 controls align-items-end">
+      <div class="col-12 col-md-3">
+        <label class="form-label">Search</label>
         <input id="searchInput" type="text" class="form-control" placeholder="Search by student or scholarship..." />
       </div>
-      <div class="col-12 col-md-4 col-lg-3">
+      <div class="col-12 col-md-3">
+        <label class="form-label">Status</label>
         <select id="statusFilter" class="form-select">
           <option value="">All Status</option>
           <option value="pending">Pending</option>
@@ -160,8 +212,36 @@ body { background: var(--gray); }
           <option value="rejected">Rejected</option>
         </select>
       </div>
-      <div class="col-12 col-md-2 col-lg-2">
-        <button id="resetFilters" class="btn btn-outline-secondary w-100">Reset</button>
+      <div class="col-12 col-md-3">
+        <label class="form-label">Scholarship</label>
+        <select id="scholarshipFilter" class="form-select">
+          <option value="">All Scholarships</option>
+          <?php foreach ($scholarshipsList as $s): ?>
+            <option value="<?= (int)$s['id'] ?>"><?= htmlspecialchars($s['name']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label">Date Range</label>
+        <div class="d-flex gap-2">
+          <input id="dateFrom" type="date" class="form-control" />
+          <input id="dateTo" type="date" class="form-control" />
+        </div>
+      </div>
+      <div class="col-12 mt-2">
+        <button id="applyFilters" class="btn btn-outline-primary">Apply Filters</button>
+        <button id="resetFilters" class="btn btn-outline-secondary">Reset</button>
+      </div>
+    </div>
+
+    <div class="sticky-actions d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+      <div>
+        <input type="checkbox" id="selectAll"> <label for="selectAll" class="ms-1">Select All</label>
+      </div>
+      <div class="d-flex gap-2">
+        <button id="bulkApprove" class="btn btn-success btn-sm"><i class="fa fa-check"></i> Approve Selected</button>
+        <button id="bulkPending" class="btn btn-primary btn-sm"><i class="fa fa-rotate-left"></i> Set Pending</button>
+        <button id="bulkReject" class="btn btn-danger btn-sm"><i class="fa fa-times"></i> Reject Selected</button>
       </div>
     </div>
 
@@ -175,7 +255,10 @@ body { background: var(--gray); }
            data-status="<?= htmlspecialchars($status) ?>">
         <div class="card-header">
           <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
-            <div>
+            <div class="form-check">
+              <input class="form-check-input select-app" type="checkbox" value="<?= (int)$row['id'] ?>" id="sel<?= (int)$row['id'] ?>">
+            </div>
+            <div class="flex-grow-1">
               <h6 class="mb-0"><?= htmlspecialchars($row['scholarship_name'] ?? '') ?></h6>
               <small><?= htmlspecialchars($row['scholarship_type'] ?? '') ?> • ₱<?= number_format((float)($row['scholarship_amount'] ?? 0), 2) ?></small>
             </div>
@@ -259,24 +342,66 @@ body { background: var(--gray); }
   </div></div>
 </div>
 
+<!-- Bulk Reject Modal -->
+<div class="modal fade" id="bulkRejectModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header">
+      <h5 class="modal-title"><i class="fa fa-comment-dots me-2"></i> Rejection Reason (Bulk)</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    </div>
+    <div class="modal-body">
+      <div class="mb-3">
+        <label class="form-label">Please provide a reason for all selected applications</label>
+        <textarea id="bulkRejectReasonText" class="form-control" rows="3" placeholder="Enter reason..." required></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+      <button type="button" class="btn btn-danger" id="confirmBulkRejectBtn"><i class="fa fa-times"></i> Reject Selected</button>
+    </div>
+  </div></div>
+</div>
+
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 (function(){
-  function filter() {
+  function filterClient() {
     const q = ($('#searchInput').val() || '').toLowerCase();
     const s = ($('#statusFilter').val() || '').toLowerCase();
+    const scholarship = $('#scholarshipFilter').val();
+    const from = $('#dateFrom').val();
+    const to = $('#dateTo').val();
+
     $('.application-item').each(function(){
       const name = $(this).data('name') || '';
       const st = $(this).data('status') || '';
       let show = true;
+
       if (q && name.indexOf(q) === -1) show = false;
       if (s && st !== s) show = false;
+      if (scholarship && $(this).find('.card-header h6').text().toLowerCase().indexOf(scholarship) === -1) show = false;
+
+      const appDate = $(this).find('.card-body p:last').text().match(/\d{4}-\d{2}-\d{2}/)[0]; // Extract date string
+      if (from && appDate < from) show = false;
+      if (to && appDate > to) show = false;
+
       $(this).toggle(show);
     });
   }
-  $('#searchInput,#statusFilter').on('input change', filter);
-  $('#resetFilters').on('click', function(){ $('#searchInput').val(''); $('#statusFilter').val(''); filter(); });
+  $('#searchInput,#statusFilter,#scholarshipFilter,#dateFrom,#dateTo').on('input change', filterClient);
+  $('#resetFilters').on('click', function(){
+    $('#searchInput').val(''); $('#statusFilter').val(''); $('#scholarshipFilter').val(''); $('#dateFrom').val(''); $('#dateTo').val('');
+    window.location = 'manage_applications.php';
+  });
+  $('#applyFilters').on('click', function(){
+    const params = new URLSearchParams(window.location.search);
+    if ($('#statusFilter').val()) params.set('filter_status', $('#statusFilter').val()); else params.delete('filter_status');
+    if ($('#scholarshipFilter').val()) params.set('filter_scholarship', $('#scholarshipFilter').val()); else params.delete('filter_scholarship');
+    if ($('#dateFrom').val()) params.set('from', $('#dateFrom').val()); else params.delete('from');
+    if ($('#dateTo').val()) params.set('to', $('#dateTo').val()); else params.delete('to');
+    window.location = 'manage_applications.php?' + params.toString();
+  });
 
   $(document).on('click', '.view-documents', function(){
     const id = $(this).data('application-id');
@@ -291,10 +416,9 @@ body { background: var(--gray); }
     if (!confirm('Delete this document?')) return;
     const docId = $(this).data('document-id');
     const appId = $('.view-documents[data-bs-target="#viewDocumentsModal"]').data('application-id') || $('#rejectApplicationId').val();
-    $.post('delete_application_document.php', { document_id: docId })
+    $.post('delete_application_document.php', { document_id: docId, csrf_token: $('#csrfToken').val() })
       .done(resp => {
         if (resp && resp.status === 'success') {
-          // Reload the documents list
           $('#documentsModalBody').html('Loading...');
           $.get('get_application_documents.php', { application_id: appId })
             .done(html => $('#documentsModalBody').html(html))
@@ -310,7 +434,7 @@ body { background: var(--gray); }
     const btn = $('[data-id="'+id+'"].do-'+action.replace('_','-') );
     const original = btn.html();
     btn.prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i>');
-    const payload = Object.assign({ action, application_id: id }, extraData || {});
+    const payload = Object.assign({ action, application_id: id, csrf_token: $('#csrfToken').val() }, extraData || {});
     $.post('manage_applications.php', payload)
       .done(resp => { if (resp && resp.status === 'success') location.reload(); else alert((resp && resp.message) || 'Action failed.'); })
       .fail(() => alert('Request failed.'))
@@ -336,7 +460,38 @@ body { background: var(--gray); }
     if (rejectModal) rejectModal.hide();
   });
 
-  filter();
+  // Bulk selection
+  $('#selectAll').on('change', function(){ $('.select-app').prop('checked', this.checked); });
+
+  function getSelectedIds(){ return $('.select-app:checked').map(function(){ return $(this).val(); }).get(); }
+
+  function postBulk(action, extra) {
+    const ids = getSelectedIds();
+    if (!ids.length) { alert('No applications selected.'); return; }
+    const payload = Object.assign({ bulk_action: action, ids: ids, csrf_token: $('#csrfToken').val() }, extra || {});
+    $.post('manage_applications.php', payload)
+      .done(resp => { if (resp && resp.status === 'success') location.reload(); else alert((resp && resp.message) || 'Bulk action failed.'); })
+      .fail(() => alert('Request failed.'));
+  }
+
+  $('#bulkApprove').on('click', function(){ postBulk('approve'); });
+  $('#bulkPending').on('click', function(){ postBulk('pending'); });
+
+  let bulkRejectModal;
+  $('#bulkReject').on('click', function(){
+    if (!getSelectedIds().length) { alert('No applications selected.'); return; }
+    $('#bulkRejectReasonText').val('');
+    bulkRejectModal = new bootstrap.Modal(document.getElementById('bulkRejectModal'));
+    bulkRejectModal.show();
+  });
+  $('#confirmBulkRejectBtn').on('click', function(){
+    const reason = ($('#bulkRejectReasonText').val() || '').trim();
+    if (!reason) { alert('Please provide a rejection reason.'); return; }
+    postBulk('reject', { rejection_reason: reason });
+    if (bulkRejectModal) bulkRejectModal.hide();
+  });
+
+  filterClient();
 })();
 </script>
 </body>

@@ -1,88 +1,127 @@
 <?php
 session_start();
 require_once 'config.php';
+require_once 'csrf.php';
 
 // Restrict to Admins
 if (!isset($_SESSION['user_id']) || !isset($_SESSION['role']) || !in_array($_SESSION['role'], ['Scholarship Admin','Admin'])) {
-    header("Location: login.php");
-    exit();
+	header("Location: login.php");
+	exit();
 }
 
 // Handle CRUD
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
-    $action = $_POST['action'];
+	$action = $_POST['action'];
+	if (!csrf_validate($_POST['csrf_token'] ?? null)) { $_SESSION['flash_error'] = 'Invalid session token.'; header("Location: admin_manage_scholarships.php"); exit(); }
 
-    if ($action === 'create') {
-        $name = trim($_POST['name'] ?? '');
-        $type = trim($_POST['type'] ?? 'Academic');
-        $description = trim($_POST['description'] ?? '');
-        $eligibility = trim($_POST['eligibility'] ?? '');
-        $amount = (float)($_POST['amount'] ?? 0);
-        $requirements = trim($_POST['requirements'] ?? '');
-        $deadline = $_POST['deadline'] ?? '';
-        $max_applicants = (int)($_POST['max_applicants'] ?? 0);
-        $documents_required = isset($_POST['documents_required']) ? json_encode($_POST['documents_required']) : json_encode([]);
-        $created_by = $_SESSION['user_id'];
-        $status = trim($_POST['status'] ?? 'pending');
+	if ($action === 'create') {
+		$name = trim($_POST['name'] ?? '');
+		$type = trim($_POST['type'] ?? 'Academic');
+		$description = trim($_POST['description'] ?? '');
+		$eligibility = trim($_POST['eligibility'] ?? '');
+		$amount = (float)$_POST['amount'];
+		$requirements = trim($_POST['requirements'] ?? '');
+		$deadline = $_POST['deadline'] ?? '';
+		$max_applicants = (int)($_POST['max_applicants'] ?? 0);
+		$documents_required = isset($_POST['documents_required']) ? json_encode($_POST['documents_required']) : json_encode([]);
+		$created_by = $_SESSION['user_id'];
+		$status = trim($_POST['status'] ?? 'pending');
 
-        if ($name === '' || $description === '' || $eligibility === '' || $deadline === '') {
-            $_SESSION['flash_error'] = 'Please fill all required fields.';
-            header("Location: admin_manage_scholarships.php");
-            exit();
-        }
+		if ($name === '' || $description === '' || $eligibility === '' || $deadline === '') {
+			$_SESSION['flash_error'] = 'Please fill all required fields.';
+			header("Location: admin_manage_scholarships.php");
+			exit();
+		}
 
-        $stmt = $conn->prepare("INSERT INTO scholarships (name, type, description, eligibility, amount, requirements, deadline, max_applicants, documents_required, created_by, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())");
-        $stmt->bind_param("ssssdsissss", $name, $type, $description, $eligibility, $amount, $requirements, $deadline, $max_applicants, $documents_required, $created_by, $status);
-        $stmt->execute();
-        $stmt->close();
+		$stmt = $conn->prepare("INSERT INTO scholarships (name, type, description, eligibility, amount, requirements, deadline, max_applicants, documents_required, created_by, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())");
+		$stmt->bind_param("ssssdsissss", $name, $type, $description, $eligibility, $amount, $requirements, $deadline, $max_applicants, $documents_required, $created_by, $status);
+		$stmt->execute();
+		$stmt->close();
 
-        header("Location: admin_manage_scholarships.php");
-        exit();
-    }
+		header("Location: admin_manage_scholarships.php");
+		exit();
+	}
 
-    if ($action === 'update') {
-        $id = (int)($_POST['id'] ?? 0);
-        $name = trim($_POST['name'] ?? '');
-        $type = trim($_POST['type'] ?? 'Academic');
-        $description = trim($_POST['description'] ?? '');
-        $eligibility = trim($_POST['eligibility'] ?? '');
-        $amount = (float)($_POST['amount'] ?? 0);
-        $requirements = trim($_POST['requirements'] ?? '');
-        $deadline = $_POST['deadline'] ?? '';
-        $max_applicants = (int)($_POST['max_applicants'] ?? 0);
-        $documents_required = isset($_POST['documents_required']) ? json_encode($_POST['documents_required']) : json_encode([]);
-        $status = trim($_POST['status'] ?? 'pending');
+	if ($action === 'update') {
+		$id = (int)($_POST['id'] ?? 0);
+		$name = trim($_POST['name'] ?? '');
+		$type = trim($_POST['type'] ?? 'Academic');
+		$description = trim($_POST['description'] ?? '');
+		$eligibility = trim($_POST['eligibility'] ?? '');
+		$amount = (float)($_POST['amount'] ?? 0);
+		$requirements = trim($_POST['requirements'] ?? '');
+		$deadline = $_POST['deadline'] ?? '';
+		$max_applicants = (int)($_POST['max_applicants'] ?? 0);
+		$documents_required = isset($_POST['documents_required']) ? json_encode($_POST['documents_required']) : json_encode([]);
+		$status = trim($_POST['status'] ?? 'pending');
 
-        $stmt = $conn->prepare("UPDATE scholarships SET name=?, type=?, description=?, eligibility=?, amount=?, requirements=?, deadline=?, max_applicants=?, documents_required=?, status=?, updated_at=NOW() WHERE id=?");
-        $stmt->bind_param("ssssdsisssi", $name, $type, $description, $eligibility, $amount, $requirements, $deadline, $max_applicants, $documents_required, $status, $id);
-        $stmt->execute();
-        $stmt->close();
+		$stmt = $conn->prepare("UPDATE scholarships SET name=?, type=?, description=?, eligibility=?, amount=?, requirements=?, deadline=?, max_applicants=?, documents_required=?, status=?, updated_at=NOW() WHERE id=?");
+		$stmt->bind_param("ssssdsisssi", $name, $type, $description, $eligibility, $amount, $requirements, $deadline, $max_applicants, $documents_required, $status, $id);
+		$stmt->execute();
+		$stmt->close();
 
-        header("Location: admin_manage_scholarships.php");
-        exit();
-    }
+		header("Location: admin_manage_scholarships.php");
+		exit();
+	}
 
-    if ($action === 'delete') {
-        $id = (int)($_POST['id'] ?? 0);
+	if ($action === 'delete') {
+		$id = (int)($_POST['id'] ?? 0);
 
-        $check = $conn->prepare("SELECT COUNT(*) c FROM scholarship_applications WHERE scholarship_id=?");
-        $check->bind_param("i", $id);
-        $check->execute();
-        $count = $check->get_result()->fetch_assoc()['c'] ?? 0;
-        $check->close();
+		$check = $conn->prepare("SELECT COUNT(*) c FROM scholarship_applications WHERE scholarship_id=?");
+		$check->bind_param("i", $id);
+		$check->execute();
+		$count = $check->get_result()->fetch_assoc()['c'] ?? 0;
+		$check->close();
 
-        if ((int)$count > 0) {
-            $_SESSION['flash_error'] = 'Cannot delete: scholarship has existing applications.';
-        } else {
-            $del = $conn->prepare("DELETE FROM scholarships WHERE id=?");
-            $del->bind_param("i", $id);
-            $del->execute();
-            $del->close();
-            $_SESSION['flash_success'] = 'Scholarship deleted.';
-        }
-        header("Location: admin_manage_scholarships.php");
-        exit();
-    }
+		if ((int)$count > 0) {
+			$_SESSION['flash_error'] = 'Cannot delete: scholarship has existing applications.';
+		} else {
+			$del = $conn->prepare("DELETE FROM scholarships WHERE id=?");
+			$del->bind_param("i", $id);
+			$del->execute();
+			$del->close();
+			$_SESSION['flash_success'] = 'Scholarship deleted.';
+		}
+		header("Location: admin_manage_scholarships.php");
+		exit();
+	}
+
+	if ($action === 'deactivate') {
+		$id = (int)($_POST['id'] ?? 0);
+		$reason = trim($_POST['reason'] ?? 'Scholarship is no longer available');
+
+		// Set scholarship inactive
+		$us = $conn->prepare("UPDATE scholarships SET status='inactive', updated_at=NOW() WHERE id=?");
+		$us->bind_param("i", $id);
+		$us->execute();
+		$us->close();
+
+		// Reject pending applications with reason and notify applicants
+		$ap = $conn->prepare("SELECT sa.id, sa.user_id FROM scholarship_applications sa WHERE sa.scholarship_id=? AND sa.status='pending'");
+		$ap->bind_param("i", $id);
+		$ap->execute();
+		$res = $ap->get_result();
+		while ($row = $res->fetch_assoc()) {
+			$aid = (int)$row['id']; $uid = $row['user_id'];
+			$ru = $conn->prepare("UPDATE scholarship_applications SET status='rejected', approval_date=NULL, rejection_reason=?, reviewed_by=?, reviewed_at=NOW() WHERE id=?");
+			$rb = $_SESSION['user_id'];
+			$ru->bind_param("ssi", $reason, $rb, $aid);
+			$ru->execute();
+			$ru->close();
+			
+			$nn = $conn->prepare("INSERT INTO scholarship_notifications (user_id, title, message, type, is_read, created_at) VALUES (?, ?, ?, 'warning', 0, NOW())");
+			$title = 'Scholarship Unavailable';
+			$message = 'Your application has been closed because the scholarship is no longer available. Reason: '.$reason;
+			$nn->bind_param("sss", $uid, $title, $message);
+			$nn->execute();
+			$nn->close();
+		}
+		$ap->close();
+
+		$_SESSION['flash_success'] = 'Scholarship deactivated and pending applications updated.';
+		header("Location: admin_manage_scholarships.php");
+		exit();
+	}
 }
 
 // Fetch list
@@ -144,10 +183,7 @@ body { background: var(--gray); }
 
     <div class="row" id="scholarshipGrid">
       <?php foreach ($scholarships as $s): ?>
-      <div class="col-lg-6 col-xl-4 mb-3 scholarship-item"
-           data-name="<?= strtolower(htmlspecialchars($s['name'])) ?>"
-           data-type="<?= strtolower(htmlspecialchars($s['type'])) ?>"
-           data-status="<?= strtolower(htmlspecialchars($s['status'])) ?>">
+      <div class="col-lg-6 col-xl-4 mb-3 scholarship-item" data-name="<?= strtolower(htmlspecialchars($s['name'])) ?>" data-type="<?= strtolower(htmlspecialchars($s['type'])) ?>" data-status="<?= strtolower(htmlspecialchars($s['status'])) ?>">
         <div class="card h-100">
           <div class="card-header">
             <h6 class="mb-0"><?= htmlspecialchars($s['name']) ?></h6>
@@ -161,9 +197,7 @@ body { background: var(--gray); }
             <div class="row mb-2">
               <div class="col-6"><small class="text-muted">Deadline:</small><div><strong><?= htmlspecialchars($s['deadline']) ?></strong></div></div>
               <div class="col-6"><small class="text-muted">Status:</small><div>
-                <span class="badge badge-status <?= $s['status']==='active'?'bg-success':($s['status']==='pending'?'bg-warning text-dark':'bg-secondary') ?>">
-                  <?= htmlspecialchars(ucfirst($s['status'])) ?>
-                </span></div>
+                <span class="badge badge-status <?= $s['status']==='active'?'bg-success':($s['status']==='pending'?'bg-warning text-dark':'bg-secondary') ?>"><?= htmlspecialchars(ucfirst($s['status'])) ?></span></div>
               </div>
             </div>
             <div class="row mb-2">
@@ -175,9 +209,13 @@ body { background: var(--gray); }
             <?php endif; ?>
             <div class="d-flex justify-content-end gap-2">
               <button class="btn btn-sm btn-warning" data-bs-toggle="modal" data-bs-target="#editModal<?= (int)$s['id'] ?>"><i class="bi bi-pencil-square"></i> Edit</button>
+              <?php if (in_array($s['status'], ['active','pending'])): ?>
+              <button type="button" class="btn btn-sm btn-outline-secondary btn-deactivate" data-id="<?= (int)$s['id'] ?>" data-name="<?= htmlspecialchars($s['name']) ?>" data-bs-toggle="modal" data-bs-target="#deactivateModal"><i class="bi bi-pause-circle"></i> Deactivate</button>
+              <?php endif; ?>
               <form method="post" onsubmit="return confirm('Delete this scholarship?')">
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" name="id" value="<?= (int)$s['id'] ?>">
+                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
                 <button class="btn btn-sm btn-danger"><i class="bi bi-trash"></i> Delete</button>
               </form>
             </div>
@@ -191,6 +229,7 @@ body { background: var(--gray); }
           <form method="post">
             <input type="hidden" name="action" value="update">
             <input type="hidden" name="id" value="<?= (int)$s['id'] ?>">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
             <div class="modal-header"><h5 class="modal-title">Edit Scholarship</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
             <div class="modal-body">
               <div class="row g-3">
@@ -245,6 +284,7 @@ body { background: var(--gray); }
   <div class="modal-dialog modal-lg"><div class="modal-content">
     <form method="post">
       <input type="hidden" name="action" value="create">
+      <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
       <div class="modal-header"><h5 class="modal-title">Add Scholarship</h5><button class="btn-close" data-bs-dismiss="modal" type="button"></button></div>
       <div class="modal-body">
         <div class="row g-3">
@@ -281,6 +321,26 @@ body { background: var(--gray); }
   </div></div>
 </div>
 
+<!-- Deactivate Modal -->
+<div class="modal fade" id="deactivateModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog"><div class="modal-content">
+    <form method="post">
+      <input type="hidden" name="action" value="deactivate">
+      <input type="hidden" name="id" id="deactId" value="">
+      <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
+      <div class="modal-header"><h5 class="modal-title"><i class="bi bi-pause-circle me-2"></i> Deactivate Scholarship</h5><button class="btn-close" data-bs-dismiss="modal" type="button"></button></div>
+      <div class="modal-body">
+        <div class="alert alert-warning">This will set the scholarship to Inactive and close all pending applications.</div>
+        <div class="mb-3">
+          <label class="form-label">Reason</label>
+          <textarea class="form-control" name="reason" id="deactReason" rows="3" placeholder="Provide a reason" required></textarea>
+        </div>
+      </div>
+      <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal" type="button">Cancel</button><button class="btn btn-danger" type="submit">Deactivate</button></div>
+    </form>
+  </div></div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 (function(){
@@ -301,6 +361,16 @@ body { background: var(--gray); }
   statusFilter?.addEventListener('change', applyFilters);
   resetBtn?.addEventListener('click', ()=>{ if(searchInput) searchInput.value=''; if(typeFilter) typeFilter.value=''; if(statusFilter) statusFilter.value=''; applyFilters(); });
   applyFilters();
+
+  document.addEventListener('click', function(e){
+    const btn = e.target.closest('.btn-deactivate');
+    if (!btn) return;
+    const id = btn.getAttribute('data-id');
+    const name = btn.getAttribute('data-name');
+    const reasonInput = document.getElementById('deactReason');
+    document.getElementById('deactId').value = id;
+    if (reasonInput) reasonInput.value = '';
+  });
 })();
 </script>
 </body>

@@ -141,8 +141,8 @@ $q->close();
 <style>
 :root { --blue:#003366; --light:#00509E; --gold:#FFD700; --gray:#F8F9FA; --sidebar:260px; }
 body { background: var(--gray); }
-.main-content { margin-left: var(--sidebar); padding: 20px; padding-bottom: 64px; }
-@media (max-width: 991.98px){ .main-content{ margin-left:0; padding-bottom: 64px; } }
+.main-content { margin-left: 0; padding: 20px; padding-bottom: 64px; }
+@media (min-width: 992px){ .sidebar + .main-content { margin-left: var(--sidebar); } }
 .page-header { background:linear-gradient(135deg,var(--blue),var(--light)); color:#fff; padding:16px; border-radius:10px; margin:20px 0; }
 .card { border-radius:12px; box-shadow:0 6px 18px rgba(0,0,0,.08); border:0; }
 .card-header { background:linear-gradient(135deg,var(--blue),var(--light)); color:#fff; }

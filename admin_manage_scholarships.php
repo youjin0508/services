@@ -141,14 +141,19 @@ $q->close();
 <style>
 :root { --blue:#003366; --light:#00509E; --gold:#FFD700; --gray:#F8F9FA; --sidebar:260px; }
 body { background: var(--gray); }
-.main-content { margin-left: var(--sidebar); padding: 20px; }
-@media (max-width: 991.98px){ .main-content{ margin-left:0; } }
+.main-content { margin-left: var(--sidebar); padding: 20px; padding-bottom: 64px; }
+@media (max-width: 991.98px){ .main-content{ margin-left:0; padding-bottom: 64px; } }
 .page-header { background:linear-gradient(135deg,var(--blue),var(--light)); color:#fff; padding:16px; border-radius:10px; margin:20px 0; }
 .card { border-radius:12px; box-shadow:0 6px 18px rgba(0,0,0,.08); border:0; }
 .card-header { background:linear-gradient(135deg,var(--blue),var(--light)); color:#fff; }
 .btn-primary{ background:var(--blue); border:none; }
 .btn-primary:hover{ background:var(--light); }
 .badge-status { border-radius:8px; padding:6px 10px; }
+.container-fluid { overflow-x: hidden; }
+/* Keep actions tidy and responsive */
+.card .d-flex.justify-content-end { flex-wrap: wrap; gap: .5rem !important; }
+.card .btn { white-space: nowrap; }
+.page-header .form-control, .page-header .form-select { min-height: 42px; }
 </style>
 </head>
 <body>

@@ -1,9 +1,12 @@
 <?php
 session_start();
 require_once 'config.php';
-if (!isset($_SESSION['user_id'])) { header('Content-Type: application/json'); echo json_encode(['status'=>'error','message'=>'User not authenticated']); exit(); }
+require_once 'csrf.php';
+header('Content-Type: application/json');
+if (!isset($_SESSION['user_id'])) { echo json_encode(['status'=>'error','message'=>'User not authenticated']); exit(); }
 
 try {
+    if (!csrf_validate($_POST['csrf_token'] ?? null)) throw new Exception('Invalid CSRF token.');
     if (!isset($_POST['scholarship_id'], $_POST['gpa'], $_POST['family_income'])) throw new Exception('Missing required application information.');
     $scholarship_id = (int)$_POST['scholarship_id'];
     $user_id = $_SESSION['user_id'];
@@ -40,9 +43,9 @@ try {
 
     $ins = $conn->prepare("INSERT INTO scholarship_applications (scholarship_id, user_id, application_date, status, gpa, course, year_level, documents_submitted, created_at, updated_at) VALUES (?, ?, NOW(), 'pending', ?, ?, ?, ?, NOW(), NOW())");
     $course = $user['course'] ?? '';
-    $year_level_value = isset($user['year']) ? (string)$user['year'] : '';
+    $year_level_value = isset($user['year']) && is_numeric($user['year']) ? (int)$user['year'] : null;
     $empty_docs_json = '[]';
-    $ins->bind_param("isdsss", $scholarship_id, $user_id, $gpa, $course, $year_level_value, $empty_docs_json);
+    $ins->bind_param("isdsis", $scholarship_id, $user_id, $gpa, $course, $year_level_value, $empty_docs_json);
     if (!$ins->execute()) throw new Exception('Failed to create application.');
     $application_id = $conn->insert_id;
     $ins->close();
@@ -99,10 +102,9 @@ try {
     $al->execute(); $al->close();
 
     $conn->commit();
-    header('Content-Type: application/json');
     echo json_encode(['status'=>'success','message'=>'Your scholarship application has been submitted successfully! Application ID: '.$application_id,'application_id'=>$application_id,'documents_uploaded'=>count($uploaded_documents)]);
 } catch (Exception $e) {
     if ($conn->errno) $conn->rollback();
-    header('Content-Type: application/json');
+    http_response_code(400);
     echo json_encode(['status'=>'error','message'=>$e->getMessage()]);
 }

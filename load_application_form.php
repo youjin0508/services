@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once 'config.php';
+require_once 'csrf.php';
 if (!isset($_SESSION['user_id']) || !isset($_GET['scholarship_id'])) {
     echo '<div class="alert alert-danger">Access denied or missing scholarship information.</div>';
     exit();
@@ -63,6 +64,7 @@ if (!empty($scholarship['documents_required'])) {
         $required_documents = [$scholarship['documents_required']];
     }
 }
+$csrfToken = csrf_token();
 ?>
 <style>
 :root {
@@ -332,7 +334,7 @@ if (!empty($scholarship['documents_required'])) {
             <div class="col-md-6">
                 <div class="mb-3">
                     <label class="form-label">Year Level</label>
-                    <input type="text" class="form-control" value="<?= htmlspecialchars($user['year_level'] ?? 'Not specified') ?>" readonly>
+                    <input type="text" class="form-control" value="<?= htmlspecialchars($user['year'] ?? 'Not specified') ?>" readonly>
                 </div>
             </div>
         </div>
@@ -407,9 +409,7 @@ if (!empty($scholarship['documents_required'])) {
                     </div>
                     <p class="mb-2">Click to upload or drag and drop</p>
                     <p class="text-muted small">PDF, JPG, PNG up to 5MB</p>
-                    <input type="file" class="d-none" accept=".pdf,.jpg,.jpeg,.png" 
-                    <input type="file" accept=".pdf,.jpg,.jpeg,.png" 
-                           data-document="<?= htmlspecialchars($document) ?>" data-index="<?= $index ?>">
+                    <input type="file" accept=".pdf,.jpg,.jpeg,.png" data-document="<?= htmlspecialchars($document) ?>" data-index="<?= $index ?>">
                 </div>
                 <div class="file-preview d-none" id="preview-<?= $index ?>">
                     <div class="file-info">
@@ -421,6 +421,7 @@ if (!empty($scholarship['documents_required'])) {
                             <i class="fas fa-times"></i>
                         </button>
                     </div>
+                    <div class="mt-2" id="fileView-<?= $index ?>"></div>
                 </div>
             </div>
             <?php endforeach; ?>
@@ -521,11 +522,43 @@ if (!empty($scholarship['documents_required'])) {
 <script>
 let currentStep = 1;
 let uploadedFiles = {};
+const CSRF_TOKEN = '<?= htmlspecialchars($csrfToken) ?>';
+const DRAFT_KEY = 'scholarship_draft_<?= htmlspecialchars($user_id) ?>_<?= (int)$scholarship_id ?>';
+
 // Initialize document uploads
 $(document).ready(function() {
     initializeDocumentUploads();
     checkEligibility();
+    loadDraft();
+    window.addEventListener('beforeunload', function (e) {
+        if (hasUnsavedData()) {
+            e.preventDefault();
+            e.returnValue = '';
+        }
+    });
 });
+function hasUnsavedData() {
+    return (!!$('#gpa').val() || !!$('#family_income').val() || Object.keys(uploadedFiles).length > 0);
+}
+function saveDraft() {
+    const draft = {
+        gpa: $('#gpa').val() || '',
+        family_income: $('#family_income').val() || '',
+        docs: Object.keys(uploadedFiles).map(i => ({ index: i, name: uploadedFiles[i].name, type: uploadedFiles[i].documentType }))
+    };
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch(_) {}
+}
+function loadDraft() {
+    try {
+        const raw = localStorage.getItem(DRAFT_KEY);
+        if (!raw) return;
+        const draft = JSON.parse(raw);
+        if (draft.gpa) $('#gpa').val(draft.gpa);
+        if (draft.family_income) $('#family_income').val(draft.family_income);
+    } catch(_) {}
+}
+$('#gpa, #family_income').on('input', saveDraft);
+
 function initializeDocumentUploads() {
     $('.document-upload').click(function() {
         $(this).find('input[type="file"]').click();
@@ -581,6 +614,7 @@ function handleFileUpload(file, uploadElement) {
         size: file.size,
         type: file.type
     };
+    saveDraft();
     
     // Show preview
     showFilePreview(index, file.name, file.size);
@@ -593,6 +627,17 @@ function showFilePreview(index, fileName, fileSize) {
     const preview = $(`#preview-${index}`);
     $(`#fileName-${index}`).text(fileName);
     $(`#fileSize-${index}`).text(formatFileSize(fileSize));
+    const file = uploadedFiles[index]?.file;
+    const viewContainer = $(`#fileView-${index}`);
+    viewContainer.empty();
+    if (file) {
+        const url = URL.createObjectURL(file);
+        if (file.type === 'application/pdf') {
+            viewContainer.append(`<embed src="${url}" type="application/pdf" width="100%" height="300px" />`);
+        } else if (file.type === 'image/jpeg' || file.type === 'image/jpg' || file.type === 'image/png') {
+            viewContainer.append(`<img src="${url}" alt="preview" style="max-width:100%; max-height:300px; border:1px solid #e9ecef; border-radius:8px;" />`);
+        }
+    }
     preview.removeClass('d-none');
 }
 function removeFile(index) {
@@ -703,7 +748,7 @@ function prepareReviewData() {
     $('#reviewStudentId').text('<?= htmlspecialchars($user['user_id']) ?>');
     $('#reviewName').text('<?= htmlspecialchars($user['first_name'] . ' ' . ($user['middle_name'] ? $user['middle_name'] . ' ' : '') . $user['last_name']) ?>');
     $('#reviewCourse').text('<?= htmlspecialchars($user['course'] ?? 'Not specified') ?>');
-    $('#reviewYearLevel').text('<?= htmlspecialchars($user['year_level'] ?? 'Not specified') ?>');
+    $('#reviewYearLevel').text('<?= htmlspecialchars($user['year'] ?? 'Not specified') ?>');
     $('#reviewGPA').text($('#gpa').val());
     $('#reviewFamilyIncome').text('₱' + $('#family_income').val());
     
@@ -711,9 +756,21 @@ function prepareReviewData() {
     let documentsHtml = '';
     Object.keys(uploadedFiles).forEach(index => {
         const file = uploadedFiles[index];
-        documentsHtml += `<div class="mb-2">
-            <i class="fas fa-file-alt text-primary"></i> 
-            <strong>${file.documentType}:</strong> ${file.name}
+        const isImage = file.type === 'image/jpeg' || file.type === 'image/jpg' || file.type === 'image/png';
+        const isPdf = file.type === 'application/pdf';
+        const url = URL.createObjectURL(file.file);
+        let previewSnippet = '';
+        if (isImage) {
+            previewSnippet = `<img src="${url}" alt="preview" style="max-width:120px; max-height:120px; border:1px solid #e9ecef; border-radius:6px; margin-left:8px;" />`;
+        } else if (isPdf) {
+            previewSnippet = `<a href="${url}" target="_blank" class="btn btn-sm btn-outline-primary ms-2"><i class="fas fa-eye"></i> Preview</a>`;
+        }
+        documentsHtml += `<div class="mb-2 d-flex align-items-center">
+            <span>
+                <i class="fas fa-file-alt text-primary"></i> 
+                <strong>${file.documentType}:</strong> ${file.name}
+            </span>
+            <span class="ms-2">${previewSnippet}</span>
         </div>`;
     });
     $('#reviewDocuments').html(documentsHtml);
@@ -767,6 +824,7 @@ function submitApplication() {
     formData.append('scholarship_id', <?= $scholarship_id ?>);
     formData.append('gpa', $('#gpa').val());
     formData.append('family_income', $('#family_income').val());
+    formData.append('csrf_token', CSRF_TOKEN);
     
     // Append files
     Object.keys(uploadedFiles).forEach(index => {
@@ -783,25 +841,30 @@ function submitApplication() {
     
     // Submit application
     $.ajax({
-        url: 'submit_enhanced_application.php',
+        url: 'apply_scholarship.php',
         type: 'POST',
         data: formData,
         processData: false,
         contentType: false,
-        success: function(response) {
-            try {
-                const result = JSON.parse(response);
-                if (result.status === 'success') {
-                    showSuccessMessage(result.message);
-                } else {
-                    showErrorMessage(result.message);
-                }
-            } catch (e) {
-                showErrorMessage('An unexpected error occurred. Please try again.');
+        dataType: 'json',
+        success: function(result) {
+            if (result && result.status === 'success') {
+                try { localStorage.removeItem(DRAFT_KEY); } catch(_) {}
+                showSuccessMessage(result.message);
+            } else {
+                const msg = (result && result.message) ? result.message : 'Submission failed. Please try again.';
+                showErrorMessage(msg);
             }
         },
-        error: function() {
-            showErrorMessage('Network error. Please check your connection and try again.');
+        error: function(xhr) {
+            let msg = 'Network or server error. Please try again.';
+            if (xhr && xhr.responseText) {
+                try {
+                    const parsed = JSON.parse(xhr.responseText);
+                    if (parsed && parsed.message) msg = parsed.message;
+                } catch(_) {}
+            }
+            showErrorMessage(msg);
         },
         complete: function() {
             submitBtn.html(originalText);

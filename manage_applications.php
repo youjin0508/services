@@ -9,6 +9,8 @@ if (!isset($_SESSION['user_id']) || !isset($_SESSION['role']) || !in_array($_SES
 	exit();
 }
 
+$currentUserId = $_SESSION['user_id'];
+
 // Bulk actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_action'], $_POST['ids'])) {
 	header('Content-Type: application/json');
@@ -103,6 +105,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'], $_POST['app
 			if (!$ok) throw new Exception("Status update failed.");
 			echo json_encode(['status'=>'success','message'=>'Application set to pending']);
 			exit();
+		} elseif ($action === 'assign_to_me') {
+			$stmt = $conn->prepare("UPDATE scholarship_applications SET reviewed_by=?, reviewed_at=NOW() WHERE id=?");
+			$reviewedBy = $_SESSION['user_id'];
+			$stmt->bind_param("si", $reviewedBy, $applicationId);
+			$ok = $stmt->execute();
+			$stmt->close();
+			if (!$ok) throw new Exception("Assignment failed.");
+			echo json_encode(['status'=>'success','message'=>'Assigned to you']);
+			exit();
+		} elseif ($action === 'needs_info') {
+			$note = trim($_POST['clarification_message'] ?? '');
+			if ($note === '') throw new Exception('Clarification message is required.');
+			$stmt = $conn->prepare("UPDATE scholarship_applications SET status='needs_info', review_notes=?, reviewed_by=?, reviewed_at=NOW() WHERE id=?");
+			$reviewedBy = $_SESSION['user_id'];
+			$stmt->bind_param("ssi", $note, $reviewedBy, $applicationId);
+			$ok = $stmt->execute();
+			$stmt->close();
+			if (!$ok) throw new Exception("Request clarification failed.");
+			// Notify student
+			$ns = $conn->prepare("INSERT INTO scholarship_notifications (user_id, title, message, type, is_read, created_at) VALUES (?, ?, ?, 'info', 0, NOW())");
+			$title = 'More Information Requested';
+			$message = 'Your application for '.($appInfo['scholarship_name'] ?? 'the scholarship').' needs more information: '.$note;
+			$ns->bind_param("sss", $appInfo['user_id'], $title, $message);
+			$ns->execute();
+			$ns->close();
+			echo json_encode(['status'=>'success','message'=>'Clarification requested']);
+			exit();
 		}
 		throw new Exception('Invalid action.');
 	} catch (Exception $e) {
@@ -130,10 +159,12 @@ if (!empty($_GET['filter_scholarship'])) { $sid = (int)$_GET['filter_scholarship
 if (!empty($_GET['filter_status'])) { $st = $conn->real_escape_string($_GET['filter_status']); $where[] = "sa.status='".$st."'"; }
 if (!empty($_GET['from'])) { $from = $conn->real_escape_string($_GET['from']); $where[] = "DATE(sa.application_date) >= '".$from."'"; }
 if (!empty($_GET['to'])) { $to = $conn->real_escape_string($_GET['to']); $where[] = "DATE(sa.application_date) <= '".$to."'"; }
+if (!empty($_GET['my'])) { $where[] = "sa.reviewed_by='".$conn->real_escape_string($currentUserId)."'"; }
 $whereSql = $where ? ('WHERE '.implode(' AND ',$where)) : '';
 
 // Pagination
-$perPage = 12;
+$allowedPer = [12,24,48];
+$perPage = (int)($_GET['per_page'] ?? 12); if (!in_array($perPage, $allowedPer)) $perPage = 12;
 $page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
 $offset = ($page - 1) * $perPage;
 
@@ -142,6 +173,8 @@ $countSql = "SELECT COUNT(*) c FROM scholarship_applications sa JOIN scholarship
 if ($whereSql) { $countSql .= $whereSql; }
 $totalCount = 0; if ($rc = $conn->query($countSql)) { $totalCount = (int)($rc->fetch_assoc()['c'] ?? 0); }
 $totalPages = (int)ceil($totalCount / $perPage);
+$showFrom = $totalCount ? ($offset + 1) : 0;
+$showTo = min($offset + $perPage, $totalCount);
 
 $sql = "SELECT sa.id, sa.scholarship_id, sa.user_id, sa.application_date, sa.status, sa.approval_date, s.name AS scholarship_name, s.type AS scholarship_type, s.amount AS scholarship_amount, u.first_name, u.middle_name, u.last_name, u.email, u.phone, u.course, u.`year` AS year_level, u.section FROM scholarship_applications sa JOIN scholarships s ON sa.scholarship_id = s.id JOIN users u ON sa.user_id = u.user_id ";
 if ($whereSql) { $sql .= $whereSql; }
@@ -173,6 +206,7 @@ body { background: var(--gray); }
 .badge-pending{ background:#fff3cd; color:#856404; }
 .badge-approved{ background:#d4edda; color:#155724; }
 .badge-rejected{ background:#f8d7da; color:#721c24; }
+.badge-needsinfo{ background:#cff4fc; color:#055160; }
 .btn-primary{ background:var(--blue); border:none; }
 .btn-primary:hover{ background:var(--light); }
 .btn-info{ background:#17a2b8; border:none; }
@@ -190,7 +224,16 @@ body { background: var(--gray); }
     <input type="hidden" id="csrfToken" value="<?= htmlspecialchars(csrf_token()) ?>">
     <div class="header d-flex flex-wrap justify-content-between align-items-center gap-2">
       <h4 class="mb-0"><i class="fa fa-file-alt me-2"></i> Manage Applications</h4>
-      <div class="d-flex gap-2">
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        <span class="text-white-50 small">Results: <?= (int)$totalCount ?> (showing <?= (int)$showFrom ?>–<?= (int)$showTo ?>)</span>
+        <div class="d-flex align-items-center gap-1">
+          <label class="me-1 small">Per page</label>
+          <select id="perPage" class="form-select form-select-sm">
+            <option value="12" <?= $perPage===12?'selected':'' ?>>12</option>
+            <option value="24" <?= $perPage===24?'selected':'' ?>>24</option>
+            <option value="48" <?= $perPage===48?'selected':'' ?>>48</option>
+          </select>
+        </div>
         <a href="scholarship_admin_dashboard.php" class="btn btn-sm btn-light">Dashboard</a>
         <a href="admin_manage_scholarships.php" class="btn btn-sm btn-light">Scholarships</a>
         <a href="approved_scholars.php" class="btn btn-sm btn-light">Approved Scholars</a>
@@ -217,6 +260,7 @@ body { background: var(--gray); }
           <option value="pending">Pending</option>
           <option value="approved">Approved</option>
           <option value="rejected">Rejected</option>
+          <option value="needs_info">Needs Info</option>
         </select>
       </div>
       <div class="col-12 col-md-3">
@@ -235,7 +279,11 @@ body { background: var(--gray); }
           <input id="dateTo" type="date" class="form-control" />
         </div>
       </div>
-      <div class="col-12 mt-2">
+      <div class="col-12 d-flex flex-wrap gap-2 mt-2">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="myQueue">
+          <label class="form-check-label" for="myQueue">My queue</label>
+        </div>
         <button id="applyFilters" class="btn btn-outline-primary">Apply Filters</button>
         <button id="resetFilters" class="btn btn-outline-secondary">Reset</button>
       </div>
@@ -268,9 +316,7 @@ body { background: var(--gray); }
               <small><?= htmlspecialchars($row['scholarship_type'] ?? '') ?> • ₱<?= number_format((float)($row['scholarship_amount'] ?? 0), 2) ?></small>
             </div>
             <div>
-              <span class="badge badge-status <?= $status==='approved'?'badge-approved':($status==='rejected'?'badge-rejected':'badge-pending') ?>">
-                <?= strtoupper($status) ?>
-              </span>
+              <span class="badge badge-status <?= $status==='approved'?'badge-approved':($status==='rejected'?'badge-rejected':($status==='needs_info'?'badge-needsinfo':'badge-pending')) ?>"><?= strtoupper($status) ?></span>
             </div>
           </div>
         </div>
@@ -301,6 +347,10 @@ body { background: var(--gray); }
               </a>
             </div>
             <div class="btn-group">
+              <button class="btn btn-outline-secondary btn-sm do-assign" data-id="<?= (int)$row['id'] ?>"><i class="fa fa-user-plus"></i> Assign to me</button>
+              <?php if ($status === 'pending' || $status === 'needs_info'): ?>
+                <button class="btn btn-warning btn-sm do-clarify" data-id="<?= (int)$row['id'] ?>" data-bs-toggle="modal" data-bs-target="#clarifyModal"><i class="fa fa-comment-dots"></i> Clarify</button>
+              <?php endif; ?>
               <?php if ($status === 'pending'): ?>
                 <button class="btn btn-success btn-sm do-approve" data-id="<?= (int)$row['id'] ?>"><i class="fa fa-check"></i> Approve</button>
                 <button class="btn btn-danger btn-sm do-reject" data-id="<?= (int)$row['id'] ?>"><i class="fa fa-times"></i> Reject</button>
@@ -319,12 +369,12 @@ body { background: var(--gray); }
     <?php if ($totalPages > 1): $qs = $_GET; ?>
     <nav class="mt-3">
       <ul class="pagination">
-        <?php $qs['page'] = max(1, $page-1); ?>
+        <?php $qs['page'] = max(1, $page-1); $qs['per_page']=$perPage; ?>
         <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>"><a class="page-link" href="?<?= htmlspecialchars(http_build_query($qs)) ?>">Previous</a></li>
-        <?php for ($p=1; $p <= $totalPages; $p++): $qs['page']=$p; ?>
+        <?php for ($p=1; $p <= $totalPages; $p++): $qs['page']=$p; $qs['per_page']=$perPage; ?>
           <li class="page-item <?= $p===$page ? 'active' : '' ?>"><a class="page-link" href="?<?= htmlspecialchars(http_build_query($qs)) ?>"><?= $p ?></a></li>
         <?php endfor; ?>
-        <?php $qs['page'] = min($totalPages, $page+1); ?>
+        <?php $qs['page'] = min($totalPages, $page+1); $qs['per_page']=$perPage; ?>
         <li class="page-item <?= $page >= $totalPages ? 'disabled' : '' ?>"><a class="page-link" href="?<?= htmlspecialchars(http_build_query($qs)) ?>">Next</a></li>
       </ul>
     </nav>
@@ -352,6 +402,27 @@ body { background: var(--gray); }
       <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
     </div>
     <div class="modal-body" id="reviewModalBody">Loading...</div>
+  </div></div>
+</div>
+
+<!-- Clarify Modal -->
+<div class="modal fade" id="clarifyModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header">
+      <h5 class="modal-title"><i class="fa fa-comment-dots me-2"></i> Request Clarification</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="clarifyApplicationId" value="">
+      <div class="mb-3">
+        <label class="form-label">Message to student</label>
+        <textarea id="clarifyMessage" class="form-control" rows="3" placeholder="Explain what is needed..." required></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+      <button type="button" class="btn btn-warning" id="confirmClarifyBtn"><i class="fa fa-paper-plane"></i> Send Request</button>
+    </div>
   </div></div>
 </div>
 
@@ -457,12 +528,15 @@ body { background: var(--gray); }
     $('#searchInput').val(''); $('#statusFilter').val(''); $('#scholarshipFilter').val(''); $('#dateFrom').val(''); $('#dateTo').val('');
     window.location = 'manage_applications.php';
   });
-  $('#applyFilters').on('click', function(){
+  $('#applyFilters, #perPage').on('click change', function(){
     const params = new URLSearchParams(window.location.search);
     if ($('#statusFilter').val()) params.set('filter_status', $('#statusFilter').val()); else params.delete('filter_status');
     if ($('#scholarshipFilter').val()) params.set('filter_scholarship', $('#scholarshipFilter').val()); else params.delete('filter_scholarship');
     if ($('#dateFrom').val()) params.set('from', $('#dateFrom').val()); else params.delete('from');
     if ($('#dateTo').val()) params.set('to', $('#dateTo').val()); else params.delete('to');
+    if ($('#myQueue').is(':checked')) params.set('my', '1'); else params.delete('my');
+    params.set('per_page', $('#perPage').val());
+    params.delete('page');
     window.location = 'manage_applications.php?' + params.toString();
   });
 
@@ -506,6 +580,7 @@ body { background: var(--gray); }
 
   $(document).on('click', '.do-approve', function(){ postAction('approve', $(this).data('id')); });
   $(document).on('click', '.do-pending', function(){ postAction('set_pending', $(this).data('id')); });
+  $(document).on('click', '.do-assign', function(){ postAction('assign_to_me', $(this).data('id')); });
 
   // Review workspace loader
   $(document).on('click', '.review-app', function(){
@@ -547,6 +622,22 @@ body { background: var(--gray); }
     if (!reason) { alert('Please provide a rejection reason.'); return; }
     postAction('reject', id, { rejection_reason: reason });
     if (rejectModal) rejectModal.hide();
+  });
+
+  // Clarify modal
+  let clarifyModal;
+  $(document).on('click', '.do-clarify', function(){
+    $('#clarifyApplicationId').val($(this).data('id'));
+    $('#clarifyMessage').val('');
+    clarifyModal = new bootstrap.Modal(document.getElementById('clarifyModal'));
+    clarifyModal.show();
+  });
+  $('#confirmClarifyBtn').on('click', function(){
+    const id = $('#clarifyApplicationId').val();
+    const msg = ($('#clarifyMessage').val() || '').trim();
+    if (!msg) { alert('Please enter a message.'); return; }
+    postAction('needs_info', id, { clarification_message: msg });
+    if (clarifyModal) clarifyModal.hide();
   });
 
   // Bulk selection
